@@ -25,6 +25,8 @@ def _tools_payload(allowed: list[str]) -> list[dict]:
     reg = registry()
     out = []
     for name in allowed:
+        if name not in reg:
+            raise ValueError(f"allowed_tools references unregistered tool: {name!r}")
         tool = reg[name]
         out.append({
             "type": "function",
