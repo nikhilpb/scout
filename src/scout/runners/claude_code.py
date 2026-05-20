@@ -10,7 +10,7 @@ from scout.output import DigestRecord, compose_digest
 from scout.runlog import RunLog
 from scout.runner import Limits, Paths, RunResult
 
-PROMPTS_DIR = Path("prompts")
+PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "prompts"
 
 
 class ClaudeCodeRunner:

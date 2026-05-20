@@ -84,6 +84,7 @@ def main(argv: list[str] | None = None) -> int:
     fb_sub = fb.add_subparsers(dest="fb_cmd", required=True)
     fb_list = fb_sub.add_parser("list")
     fb_list.add_argument("--topic")
+    fb_list.add_argument("--since", help="ignored in v1; reserved for future filtering")
     fb_add = fb_sub.add_parser("add")
     fb_add.add_argument("--topic", required=True)
     fb_add.add_argument("--date")
