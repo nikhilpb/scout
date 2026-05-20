@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import logging
+import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Literal, Optional
 
+import yaml
 from croniter import croniter
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
+log = logging.getLogger("scout.config")
 
 class ConfigError(Exception):
     pass
@@ -130,3 +134,51 @@ class TopicConfig(BaseModel):
             if extra:
                 raise ValueError(f"unknown tool(s): {sorted(extra)}")
         return self
+
+
+SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
+
+@dataclass(frozen=True)
+class LoadedTopic:
+    slug: str
+    path: Path
+    config: TopicConfig
+
+
+def load_topic(path: Path) -> LoadedTopic:
+    if path.suffix != ".yaml":
+        raise ConfigError(f"{path}: expected .yaml extension")
+    slug = path.stem
+    if not SLUG_RE.match(slug):
+        raise ConfigError(
+            f"{path}: invalid slug '{slug}' — must match {SLUG_RE.pattern}"
+        )
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as e:
+        raise ConfigError(f"{path}: malformed YAML: {e}") from e
+    try:
+        cfg = TopicConfig(**data)
+    except Exception as e:
+        raise ConfigError(f"{path}: {e}") from e
+    if cfg.runner != "builtin" and cfg.tools is not None:
+        log.warning(
+            "%s: `tools` field is ignored when runner=%s (uses its own tool set)",
+            path,
+            cfg.runner,
+        )
+    return LoadedTopic(slug=slug, path=path, config=cfg)
+
+
+def load_all_topics(topics_dir: Path) -> dict[str, LoadedTopic]:
+    out: dict[str, LoadedTopic] = {}
+    if not topics_dir.exists():
+        return out
+    for p in sorted(topics_dir.glob("*.yaml")):
+        try:
+            loaded = load_topic(p)
+            out[loaded.slug] = loaded
+        except ConfigError as e:
+            log.error("skipping %s: %s", p.name, e)
+    return out
