@@ -15,11 +15,9 @@ def registry() -> Mapping[str, ToolImpl]:
     return dict(_REGISTRY)
 
 
-# Tools self-register at import time. Guard with try/except so this Task 10
-# package can be imported before Tasks 11–15 land. Task 15 will remove the
-# guards once all five tools are present.
-for _name in ("write_digest", "read_history", "fetch_url", "web_search", "browser"):
-    try:
-        __import__(f"scout.agent.tools.{_name}")
-    except ImportError:
-        pass
+# Tools self-register at import time.
+from scout.agent.tools import browser as _browser  # noqa: F401,E402
+from scout.agent.tools import fetch_url as _fetch_url  # noqa: F401,E402
+from scout.agent.tools import read_history as _read_history  # noqa: F401,E402
+from scout.agent.tools import web_search as _web_search  # noqa: F401,E402
+from scout.agent.tools import write_digest as _write_digest  # noqa: F401,E402
