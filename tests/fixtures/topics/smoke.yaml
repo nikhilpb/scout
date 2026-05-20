@@ -1,0 +1,7 @@
+title: Smoke
+description: Smoke test topic.
+cadence: "0 * * * *"
+model: anthropic/claude-sonnet-4-6
+prompt:
+  inline: |
+    Write a one-paragraph summary.
