@@ -78,6 +78,7 @@ def main(argv: list[str] | None = None) -> int:
     run_p.add_argument("--dry-run", action="store_true")
 
     sub.add_parser("tick", help="orchestrator (run from cron)")
+    sub.add_parser("doctor", help="health summary across last 7 days")
 
     args = parser.parse_args(argv)
     if args.command == "validate":
@@ -90,6 +91,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "tick":
         from scout.orchestrator import tick
         return tick(Path("."))
+    if args.command == "doctor":
+        from scout.doctor import doctor
+        return doctor(Path("."))
     parser.print_help()
     return 0
 
