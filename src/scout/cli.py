@@ -80,6 +80,16 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("tick", help="orchestrator (run from cron)")
     sub.add_parser("doctor", help="health summary across last 7 days")
 
+    fb = sub.add_parser("feedback", help="capture or report feedback")
+    fb_sub = fb.add_subparsers(dest="fb_cmd", required=True)
+    fb_list = fb_sub.add_parser("list")
+    fb_list.add_argument("--topic")
+    fb_add = fb_sub.add_parser("add")
+    fb_add.add_argument("--topic", required=True)
+    fb_add.add_argument("--date")
+    fb_add.add_argument("--rating", type=int)
+    fb_add.add_argument("--notes")
+
     args = parser.parse_args(argv)
     if args.command == "validate":
         return _cmd_validate(args)
@@ -94,6 +104,40 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "doctor":
         from scout.doctor import doctor
         return doctor(Path("."))
+    if args.command == "feedback":
+        from scout.feedback import append_block, find_latest, parse_blocks
+        output_dir = Path("output")
+        if args.fb_cmd == "list":
+            if output_dir.exists():
+                for topic_dir in sorted(output_dir.iterdir()):
+                    if not topic_dir.is_dir():
+                        continue
+                    if args.topic and topic_dir.name != args.topic:
+                        continue
+                    for f in sorted(topic_dir.glob("*.md")):
+                        blocks, _ = parse_blocks(f.read_text())
+                        for b in blocks:
+                            print(f"{topic_dir.name}/{f.name}: {b}")
+            return 0
+        if args.fb_cmd == "add":
+            if args.date:
+                target = output_dir / args.topic / f"{args.date}.md"
+                if not target.exists():
+                    print(f"no digest at {target}", file=sys.stderr)
+                    return 1
+            else:
+                target = find_latest(args.topic, output_dir)
+                if target is None:
+                    print(f"no digests for {args.topic}", file=sys.stderr)
+                    return 1
+            data = {}
+            if args.rating is not None:
+                data["rating"] = args.rating
+            if args.notes:
+                data["notes"] = args.notes
+            append_block(target, data)
+            print(f"appended feedback to {target}")
+            return 0
     parser.print_help()
     return 0
 
