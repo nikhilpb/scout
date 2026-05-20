@@ -72,11 +72,19 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("validate", help="schema-check all topic configs")
     sub.add_parser("topics", help="status table across topics")
 
+    run_p = sub.add_parser("run", help="run a single topic now")
+    run_p.add_argument("--topic", required=True)
+    run_p.add_argument("--force", action="store_true")
+    run_p.add_argument("--dry-run", action="store_true")
+
     args = parser.parse_args(argv)
     if args.command == "validate":
         return _cmd_validate(args)
     if args.command == "topics":
         return _cmd_topics(args)
+    if args.command == "run":
+        from scout.worker import run_topic
+        return run_topic(args.topic, repo_dir=Path("."), force=args.force, dry_run=args.dry_run)
     parser.print_help()
     return 0
 
