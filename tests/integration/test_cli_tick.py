@@ -1,0 +1,42 @@
+import os
+import stat
+import subprocess
+import textwrap
+from datetime import datetime, timezone
+
+import pytest
+
+
+@pytest.mark.integration
+def test_tick_runs_due_topics(tmp_path, monkeypatch):
+    subprocess.run(["git", "init", "-b", "main", str(tmp_path)], check=True)
+    env = {**os.environ,
+           "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "--allow-empty", "-m", "init"],
+                   check=True, env=env)
+    (tmp_path / "topics").mkdir()
+    (tmp_path / "topics" / "ai.yaml").write_text(textwrap.dedent("""
+        title: AI
+        description: d
+        cadence: "0 * * * *"
+        runner: claude-code
+        prompt: {template: briefing}
+    """))
+    (tmp_path / "prompts").mkdir()
+    (tmp_path / "prompts" / "briefing.md").write_text("brief")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    script = bindir / "claude"
+    script.write_text(textwrap.dedent("""\
+        #!/bin/sh
+        mkdir -p ai && echo "# hi" > ai/$(date -u +%Y-%m-%d).md
+    """))
+    script.chmod(script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    monkeypatch.setenv("PATH", f"{bindir}:{os.environ['PATH']}")
+    monkeypatch.chdir(tmp_path)
+
+    from scout.cli import main
+    assert main(["tick"]) == 0
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    assert (tmp_path / "output" / "ai" / f"{today}.md").exists()

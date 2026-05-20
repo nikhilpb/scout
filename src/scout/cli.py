@@ -77,6 +77,8 @@ def main(argv: list[str] | None = None) -> int:
     run_p.add_argument("--force", action="store_true")
     run_p.add_argument("--dry-run", action="store_true")
 
+    sub.add_parser("tick", help="orchestrator (run from cron)")
+
     args = parser.parse_args(argv)
     if args.command == "validate":
         return _cmd_validate(args)
@@ -85,6 +87,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "run":
         from scout.worker import run_topic
         return run_topic(args.topic, repo_dir=Path("."), force=args.force, dry_run=args.dry_run)
+    if args.command == "tick":
+        from scout.orchestrator import tick
+        return tick(Path("."))
     parser.print_help()
     return 0
 
