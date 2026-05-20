@@ -41,3 +41,10 @@ def test_malformed_toml_raises(tmp_path):
     p.write_text("this is not = valid = toml [")
     with pytest.raises(ConfigError):
         load_global_config(p)
+
+
+def test_unknown_key_raises(tmp_path):
+    p = tmp_path / "scout.toml"
+    p.write_text("[defaults]\ntimout_seconds = 300\n")
+    with pytest.raises(ConfigError):
+        load_global_config(p)

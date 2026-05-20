@@ -40,11 +40,14 @@ def load_global_config(path: Path) -> GlobalConfig:
     if not path.exists():
         return GlobalConfig(Defaults(), Scheduler(), Git())
     try:
-        data = tomllib.loads(path.read_text())
+        with path.open("rb") as f:
+            data = tomllib.load(f)
+        return GlobalConfig(
+            defaults=Defaults(**data.get("defaults", {})),
+            scheduler=Scheduler(**data.get("scheduler", {})),
+            git=Git(**data.get("git", {})),
+        )
     except tomllib.TOMLDecodeError as e:
         raise ConfigError(f"invalid TOML in {path}: {e}") from e
-    return GlobalConfig(
-        defaults=Defaults(**data.get("defaults", {})),
-        scheduler=Scheduler(**data.get("scheduler", {})),
-        git=Git(**data.get("git", {})),
-    )
+    except TypeError as e:
+        raise ConfigError(f"unexpected field in {path}: {e}") from e
