@@ -28,8 +28,6 @@ def test_dry_run_writes_no_commit(tmp_path, monkeypatch):
         runner: claude-code
         prompt: {template: briefing}
     """))
-    (tmp_path / "prompts").mkdir()
-    (tmp_path / "prompts" / "briefing.md").write_text("brief")
     bindir = tmp_path / "bin"
     bindir.mkdir()
     script = bindir / "claude"
@@ -39,7 +37,7 @@ def test_dry_run_writes_no_commit(tmp_path, monkeypatch):
     """))
     script.chmod(script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     monkeypatch.setenv("PATH", f"{bindir}:{os.environ['PATH']}")
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SCOUT_DATA_DIR", str(tmp_path))
 
     from scout.cli import main
     assert main(["run", "--topic", "ai", "--dry-run", "--force"]) == 0

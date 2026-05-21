@@ -3,11 +3,12 @@ from __future__ import annotations
 import json
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+
+from scout.paths import DataPaths
 
 
-def doctor(repo_dir: Path) -> int:
-    logs_dir = repo_dir / "logs"
+def doctor(data: DataPaths) -> int:
+    logs_dir = data.logs_dir
     cutoff = datetime.now(timezone.utc) - timedelta(days=7)
     per_topic: dict[str, dict] = defaultdict(
         lambda: {"ok": 0, "failed": 0, "last_error": None, "cost": 0.0}

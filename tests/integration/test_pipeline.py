@@ -9,40 +9,35 @@ import pytest
 from scout.agent.llm import Response, ToolCall
 from scout.runners import builtin as br
 from scout.worker import run_topic
+from tests.conftest import make_data_paths
 from tests.fakes.llm import FakeLLMClient
 
 
 @pytest.mark.integration
 def test_full_pipeline(tmp_path, monkeypatch):
-    # Set up a temp bare remote and a working repo populated with the scout source
+    # Data repo lives in tmp_path; code stays in the real source tree.
     remote = tmp_path / "remote.git"
-    work = tmp_path / "scout-repo"
+    data_root = tmp_path / "scout-data"
+    data_root.mkdir()
     subprocess.run(["git", "init", "--bare", "-b", "main", str(remote)], check=True)
 
-    # Copy the scout source tree into the work dir (excluding .git, .venv, output, state, logs)
-    repo_root = Path(__file__).resolve().parent.parent.parent
-    shutil.copytree(
-        repo_root, work,
-        ignore=shutil.ignore_patterns(
-            ".git", ".venv", "__pycache__", "logs", "state", "output", ".pytest_cache",
-            ".ruff_cache", "*.egg-info", "dist",
-        ),
-    )
     env = {**os.environ,
            "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
-    subprocess.run(["git", "init", "-b", "main", str(work)], check=True)
-    subprocess.run(["git", "-C", str(work), "remote", "add", "origin", str(remote)], check=True)
-    subprocess.run(["git", "-C", str(work), "add", "."], check=True)
-    subprocess.run(["git", "-C", str(work), "commit", "-m", "init"], check=True, env=env)
-    subprocess.run(["git", "-C", str(work), "push", "-u", "origin", "main"], check=True)
+    subprocess.run(["git", "init", "-b", "main", str(data_root)], check=True)
+    subprocess.run(["git", "-C", str(data_root), "remote", "add", "origin", str(remote)],
+                   check=True)
 
-    # Drop in the smoke topic fixture
-    (work / "topics").mkdir(exist_ok=True)
+    # Seed the data repo: topics dir + smoke topic fixture + an initial commit.
+    (data_root / "topics").mkdir()
     shutil.copy(
         Path(__file__).parent.parent / "fixtures" / "topics" / "smoke.yaml",
-        work / "topics" / "smoke.yaml",
+        data_root / "topics" / "smoke.yaml",
     )
+    subprocess.run(["git", "-C", str(data_root), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(data_root), "commit", "-m", "init"],
+                   check=True, env=env)
+    subprocess.run(["git", "-C", str(data_root), "push", "-u", "origin", "main"], check=True)
 
     # Script the LLM: a single call to write_digest
     script = [
@@ -58,19 +53,19 @@ def test_full_pipeline(tmp_path, monkeypatch):
     fake = FakeLLMClient(script)
     monkeypatch.setattr(br, "default_llm_client", lambda: fake)
 
-    monkeypatch.chdir(work)
-    rc = run_topic("smoke", repo_dir=work, force=True)
+    data = make_data_paths(data_root)
+    rc = run_topic("smoke", data=data, force=True)
     assert rc == 0
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    p = work / "output" / "smoke" / f"{today}.md"
+    p = data.output_dir / "smoke" / f"{today}.md"
     assert p.exists()
     content = p.read_text()
     assert "# Smoke" in content
     assert content.startswith("---\n")
 
     from scout.state import read_state
-    st = read_state("smoke", work / "state")
+    st = read_state("smoke", data.state_dir)
     assert st is not None
     assert st.last_status == "ok"
 

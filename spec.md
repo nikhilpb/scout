@@ -53,16 +53,21 @@ A single cron entry on the host:
 
 ### 2.2 Repo layout
 
+Scout lives in two repositories: a **code repo** (this one) holds the Python project; a **data repo** (separate, located at `$SCOUT_DATA_DIR`) holds the user-edited configs, the live `scout.toml`, the committed digests, and the per-machine state and logs.
+
+Code repo:
+
 ```
 scout/
 ├── pyproject.toml              # uv project
 ├── uv.lock
-├── scout.toml                  # global defaults (limits, git identity, etc.)
+├── scout.toml.example          # template; copied into the data repo on setup
 ├── spec.md
 ├── AGENTS.md
 ├── src/scout/
 │   ├── __init__.py
 │   ├── cli.py                  # scout tick | run | topics | validate | doctor | feedback
+│   ├── paths.py                # DataPaths value object + resolve()
 │   ├── scheduler.py            # is-due logic, croniter integration
 │   ├── runner.py               # Runner protocol, factory, dispatch
 │   ├── runners/
@@ -80,19 +85,31 @@ scout/
 │   │       └── write_digest.py
 │   ├── config.py               # topic + global config schemas (pydantic)
 │   ├── state.py                # last-run state read/write
-│   ├── git_publish.py          # commit + push of output/
+│   ├── git_publish.py          # commit + push inside the data repo
 │   └── feedback.py             # inline-feedback parser & CLI helpers
-├── topics/                     # user-edited, one YAML per topic
-│   └── ai-research.yaml
-├── prompts/                    # shipped templates
+├── prompts/                    # shipped templates (versioned with the code)
 │   ├── headlines.md
 │   ├── briefing.md
 │   └── sectioned.md
-├── state/                      # gitignored
-├── logs/                       # gitignored
-├── output/                     # committed; topics/<slug>/<YYYY-MM-DD>.md
+├── docs/
+│   └── setup.md                # bootstrapping the data repo + cron
 └── tests/
 ```
+
+Data repo (located at `$SCOUT_DATA_DIR`, conventionally `~/git/scout-data`):
+
+```
+scout-data/
+├── scout.toml                  # live config (global defaults, git identity, etc.)
+├── topics/                     # user-edited, one YAML per topic
+│   └── ai-research.yaml
+├── output/                     # committed; <slug>/<YYYY-MM-DD>.md
+├── state/                      # gitignored (per-machine)
+├── logs/                       # gitignored
+└── .gitignore                  # state/, logs/
+```
+
+Scout resolves the data repo at runtime in this order: `--data-dir <path>` flag, then `$SCOUT_DATA_DIR`, then error. There is no fallback to the current working directory.
 
 ### 2.3 Boundaries
 
@@ -165,6 +182,8 @@ tools:                              # optional allowlist; builtin runner only.
 - `limits.timeout_seconds` (when present) must be a positive integer.
 
 ### 3.2 Global defaults — `scout.toml`
+
+Lives in the data repo at `$SCOUT_DATA_DIR/scout.toml`. The code repo ships a `scout.toml.example` template; setup copies it into the data repo.
 
 ```toml
 [defaults]

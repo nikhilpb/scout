@@ -3,19 +3,18 @@ from __future__ import annotations
 import argparse
 import sys
 from datetime import datetime
-from pathlib import Path
 
 from croniter import croniter
 
 from scout.config import ConfigError, load_all_topics, load_topic
+from scout.paths import DataPaths, DataPathsError
 from scout.state import read_state
 
 
-def _cmd_validate(args: argparse.Namespace) -> int:
-    topics_dir = Path("topics")
+def _cmd_validate(args: argparse.Namespace, data: DataPaths) -> int:
     failures = 0
     total = 0
-    for p in sorted(topics_dir.glob("*.yaml")):
+    for p in sorted(data.topics_dir.glob("*.yaml")) if data.topics_dir.exists() else []:
         total += 1
         try:
             load_topic(p)
@@ -30,12 +29,11 @@ def _fmt(v) -> str:
     return "—" if v is None else str(v)
 
 
-def _cmd_topics(args: argparse.Namespace) -> int:
-    topics = load_all_topics(Path("topics"))
-    state_dir = Path("state")
+def _cmd_topics(args: argparse.Namespace, data: DataPaths) -> int:
+    topics = load_all_topics(data.topics_dir)
     rows = []
     for slug, loaded in topics.items():
-        st = read_state(slug, state_dir)
+        st = read_state(slug, data.state_dir)
         if st:
             last_run = st.last_run.isoformat()
             last_status = st.last_status
@@ -67,6 +65,12 @@ def _cmd_topics(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="scout", description="Personal news agent.")
+    parser.add_argument(
+        "--data-dir",
+        dest="data_dir",
+        default=None,
+        help="path to the scout data repo (default: $SCOUT_DATA_DIR)",
+    )
     sub = parser.add_subparsers(dest="command")
 
     sub.add_parser("validate", help="schema-check all topic configs")
@@ -92,22 +96,33 @@ def main(argv: list[str] | None = None) -> int:
     fb_add.add_argument("--notes")
 
     args = parser.parse_args(argv)
+
+    if args.command is None:
+        parser.print_help()
+        return 0
+
+    try:
+        data = DataPaths.resolve(args.data_dir)
+    except DataPathsError as e:
+        print(f"scout: {e}", file=sys.stderr)
+        return 2
+
     if args.command == "validate":
-        return _cmd_validate(args)
+        return _cmd_validate(args, data)
     if args.command == "topics":
-        return _cmd_topics(args)
+        return _cmd_topics(args, data)
     if args.command == "run":
         from scout.worker import run_topic
-        return run_topic(args.topic, repo_dir=Path("."), force=args.force, dry_run=args.dry_run)
+        return run_topic(args.topic, data=data, force=args.force, dry_run=args.dry_run)
     if args.command == "tick":
         from scout.orchestrator import tick
-        return tick(Path("."))
+        return tick(data)
     if args.command == "doctor":
         from scout.doctor import doctor
-        return doctor(Path("."))
+        return doctor(data)
     if args.command == "feedback":
         from scout.feedback import append_block, find_latest, parse_blocks
-        output_dir = Path("output")
+        output_dir = data.output_dir
         if args.fb_cmd == "list":
             if output_dir.exists():
                 for topic_dir in sorted(output_dir.iterdir()):
@@ -131,12 +146,12 @@ def main(argv: list[str] | None = None) -> int:
                 if target is None:
                     print(f"no digests for {args.topic}", file=sys.stderr)
                     return 1
-            data = {}
+            payload = {}
             if args.rating is not None:
-                data["rating"] = args.rating
+                payload["rating"] = args.rating
             if args.notes:
-                data["notes"] = args.notes
-            append_block(target, data)
+                payload["notes"] = args.notes
+            append_block(target, payload)
             print(f"appended feedback to {target}")
             return 0
     parser.print_help()

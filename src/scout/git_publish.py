@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from scout.config import Git
+from scout.paths import DataPaths
 
 log = logging.getLogger("scout.git_publish")
 
@@ -35,13 +36,12 @@ def _run(cmd: list[str], cwd: Path, env_extra: dict | None = None) -> subprocess
 
 
 def publish(
-    repo_dir: Path,
+    *,
+    data: DataPaths,
     file_path: Path,
     slug: str,
     date_str: str,
     git_cfg: Git,
-    *,
-    state_dir: Path,
 ) -> None:
     author_env = {
         "GIT_AUTHOR_NAME": git_cfg.author_name,
@@ -49,31 +49,31 @@ def publish(
         "GIT_COMMITTER_NAME": git_cfg.author_name,
         "GIT_COMMITTER_EMAIL": git_cfg.author_email,
     }
-    rel = file_path.relative_to(repo_dir).as_posix()
-    with _publish_lock(state_dir):
-        add = _run(["git", "add", rel], repo_dir)
+    rel = file_path.relative_to(data.root).as_posix()
+    with _publish_lock(data.state_dir):
+        add = _run(["git", "add", rel], data.root)
         if add.returncode != 0:
             raise PushDeferred(f"git add failed: {add.stderr}")
         commit = _run(
             ["git", "commit", "-m", f"digest({slug}): {date_str}"],
-            repo_dir, env_extra=author_env,
+            data.root, env_extra=author_env,
         )
         if commit.returncode != 0:
             raise PushDeferred(f"git commit failed: {commit.stderr}")
 
-        push = _run(["git", "push", git_cfg.remote, git_cfg.branch], repo_dir)
+        push = _run(["git", "push", git_cfg.remote, git_cfg.branch], data.root)
         if push.returncode == 0:
             return
 
         log.warning("push failed (%s); attempting pull --rebase + retry", push.stderr.strip())
         rebase = _run(
             ["git", "pull", "--rebase", git_cfg.remote, git_cfg.branch],
-            repo_dir, env_extra=author_env,
+            data.root, env_extra=author_env,
         )
         if rebase.returncode != 0:
             log.error("pull --rebase failed: %s", rebase.stderr.strip())
             raise PushDeferred("rebase failed; local commit retained")
-        push2 = _run(["git", "push", git_cfg.remote, git_cfg.branch], repo_dir)
+        push2 = _run(["git", "push", git_cfg.remote, git_cfg.branch], data.root)
         if push2.returncode != 0:
             log.error("retry push failed: %s", push2.stderr.strip())
             raise PushDeferred("push still failing after rebase; local commit retained")
