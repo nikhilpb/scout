@@ -61,8 +61,7 @@ def test_scout_run_dry_run_against_gemini(tmp_path, monkeypatch):
           - write_digest
     """)
     )
-    (tmp_path / "prompts").mkdir()
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SCOUT_DATA_DIR", str(tmp_path))
 
     from scout.cli import main
 

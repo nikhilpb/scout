@@ -5,21 +5,20 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
-from pathlib import Path
 
 from scout.config import load_all_topics, load_global_config
+from scout.paths import DataPaths
 from scout.scheduler import select_due
 from scout.state import read_state
 
 log = logging.getLogger("scout.orchestrator")
 
 
-def tick(repo_dir: Path) -> int:
-    topics = load_all_topics(repo_dir / "topics")
-    global_cfg = load_global_config(repo_dir / "scout.toml")
-    state_dir = repo_dir / "state"
+def tick(data: DataPaths) -> int:
+    topics = load_all_topics(data.topics_dir)
+    global_cfg = load_global_config(data.config_path)
     now = datetime.now(timezone.utc)
-    states = {slug: read_state(slug, state_dir) for slug in topics}
+    states = {slug: read_state(slug, data.state_dir) for slug in topics}
     topic_cfgs = {s: t.config for s, t in topics.items()}
     due = select_due(topic_cfgs, states, now)
     print(f"{len(topics)} evaluated, {len(due)} due")
@@ -29,7 +28,7 @@ def tick(repo_dir: Path) -> int:
     results: dict[str, int] = {}
     with ThreadPoolExecutor(max_workers=cap) as ex:
         futures = {
-            ex.submit(_spawn_run, slug, repo_dir): slug
+            ex.submit(_spawn_run, slug, data): slug
             for slug in sorted(due)
         }
         for fut in as_completed(futures):
@@ -41,7 +40,11 @@ def tick(repo_dir: Path) -> int:
     return 0 if fail == 0 else 1
 
 
-def _spawn_run(slug: str, repo_dir: Path) -> int:
-    cmd = [sys.executable, "-m", "scout", "run", "--topic", slug]
-    proc = subprocess.run(cmd, cwd=repo_dir)
+def _spawn_run(slug: str, data: DataPaths) -> int:
+    cmd = [
+        sys.executable, "-m", "scout",
+        "--data-dir", str(data.root),
+        "run", "--topic", slug,
+    ]
+    proc = subprocess.run(cmd)
     return proc.returncode

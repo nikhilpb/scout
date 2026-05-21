@@ -16,7 +16,7 @@ def test_doctor_reports(tmp_path, capsys, monkeypatch):
             "status": "ok", "duration_seconds": 12.0, "cost_usd": 0.05,
         }) + "\n"
     )
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SCOUT_DATA_DIR", str(tmp_path))
     assert main(["doctor"]) == 0
     out = capsys.readouterr().out
     assert "ai" in out

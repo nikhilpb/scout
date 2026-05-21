@@ -19,7 +19,7 @@ def test_topics_table(tmp_path, capsys, monkeypatch):
         last_run=datetime(2026, 5, 20, 7, tzinfo=timezone.utc),
         last_status="ok", last_error=None, last_duration_seconds=12.3,
     ))
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SCOUT_DATA_DIR", str(tmp_path))
     assert main(["topics"]) == 0
     out = capsys.readouterr().out
     assert "ai" in out

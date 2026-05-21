@@ -4,6 +4,7 @@ from pathlib import Path
 
 from scout.config import Git
 from scout.git_publish import publish
+from tests.conftest import make_data_paths
 
 
 def init_repos(tmp_path: Path) -> tuple[Path, Path]:
@@ -23,13 +24,12 @@ def init_repos(tmp_path: Path) -> tuple[Path, Path]:
 
 def test_publish_happy_path(tmp_path):
     work, remote = init_repos(tmp_path)
-    (work / "out").mkdir()
-    f = work / "out" / "x.md"
+    (work / "output").mkdir()
+    f = work / "output" / "x.md"
     f.write_text("hello")
-    state_dir = work / "state"
-    state_dir.mkdir()
-    git_cfg = Git()
-    publish(work, f, "x", "2026-05-20", git_cfg, state_dir=state_dir)
+    data = make_data_paths(work)
+    data.state_dir.mkdir()
+    publish(data=data, file_path=f, slug="x", date_str="2026-05-20", git_cfg=Git())
     log = subprocess.check_output(["git", "-C", str(work), "log", "--oneline"]).decode()
     assert "digest(x): 2026-05-20" in log
     remote_log = subprocess.check_output(["git", "-C", str(remote), "log", "--oneline"]).decode()
@@ -48,12 +48,12 @@ def test_push_failure_triggers_rebase_retry(tmp_path):
     subprocess.run(["git", "-C", str(other), "commit", "-m", "side"], check=True, env=env)
     subprocess.run(["git", "-C", str(other), "push", "origin", "main"], check=True)
 
-    (work / "out").mkdir(exist_ok=True)
-    f = work / "out" / "y.md"
+    (work / "output").mkdir(exist_ok=True)
+    f = work / "output" / "y.md"
     f.write_text("y")
-    state_dir = work / "state"
-    state_dir.mkdir(exist_ok=True)
-    publish(work, f, "y", "2026-05-20", Git(), state_dir=state_dir)
+    data = make_data_paths(work)
+    data.state_dir.mkdir(exist_ok=True)
+    publish(data=data, file_path=f, slug="y", date_str="2026-05-20", git_cfg=Git())
     log = subprocess.check_output(["git", "-C", str(remote), "log", "--oneline"]).decode()
     assert "side" in log
     assert "digest(y)" in log

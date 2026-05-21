@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from pathlib import Path
 
 from scout.config import load_global_config, load_topic
 from scout.git_publish import PushDeferred, publish
+from scout.paths import DataPaths
 from scout.runlog import RunLog
 from scout.runner import Limits, Paths, make_runner
 from scout.scheduler import is_due
@@ -17,24 +17,21 @@ log = logging.getLogger("scout.worker")
 def run_topic(
     slug: str,
     *,
-    repo_dir: Path,
+    data: DataPaths,
     force: bool = False,
     dry_run: bool = False,
 ) -> int:
-    topic_path = repo_dir / "topics" / f"{slug}.yaml"
+    topic_path = data.topics_dir / f"{slug}.yaml"
     loaded = load_topic(topic_path)
-    global_cfg = load_global_config(repo_dir / "scout.toml")
-    state_dir = repo_dir / "state"
-    logs_dir = repo_dir / "logs"
-    output_dir = repo_dir / "output"
+    global_cfg = load_global_config(data.config_path)
 
     now = datetime.now(timezone.utc)
-    state = read_state(slug, state_dir)
+    state = read_state(slug, data.state_dir)
     if not force and not is_due(loaded.config, state, now):
         print(f"{slug}: not due")
         return 0
 
-    with acquire_lock(slug, state_dir) as got:
+    with acquire_lock(slug, data.state_dir) as got:
         if not got:
             print(f"{slug}: skipped (locked)")
             return 0
@@ -46,22 +43,22 @@ def run_topic(
             else global_cfg.defaults.timeout_seconds
         )
         try:
-            with RunLog(slug, logs_dir, now=now) as rl:
+            with RunLog(slug, data.logs_dir, now=now) as rl:
                 result = runner.execute(
                     loaded,
-                    Paths(output_dir=output_dir, logs_dir=logs_dir),
+                    Paths(output_dir=data.output_dir, logs_dir=data.logs_dir),
                     Limits(timeout_seconds=timeout),
                     run_log=rl, now=now,
                 )
         except Exception as e:
             log.exception("runner crashed")
-            write_state_atomic(slug, state_dir, TopicState(
+            write_state_atomic(slug, data.state_dir, TopicState(
                 last_run=now, last_status="failed",
                 last_error=f"runner_crashed: {e}", last_duration_seconds=0.0,
             ))
             return 1
 
-        write_state_atomic(slug, state_dir, TopicState(
+        write_state_atomic(slug, data.state_dir, TopicState(
             last_run=now,
             last_status=result.status,
             last_error=result.reason if result.status == "failed" else None,
@@ -77,12 +74,11 @@ def run_topic(
             return 0 if result.status == "ok" else 1
         try:
             publish(
-                repo_dir=repo_dir,
+                data=data,
                 file_path=result.output_path,
                 slug=slug,
                 date_str=now.strftime("%Y-%m-%d"),
                 git_cfg=global_cfg.git,
-                state_dir=state_dir,
             )
             print(f"{slug}: ok (published)")
         except PushDeferred as e:
