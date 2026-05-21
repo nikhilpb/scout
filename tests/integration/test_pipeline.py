@@ -17,7 +17,7 @@ def test_full_pipeline(tmp_path, monkeypatch):
     # Set up a temp bare remote and a working repo populated with the scout source
     remote = tmp_path / "remote.git"
     work = tmp_path / "scout-repo"
-    subprocess.run(["git", "init", "--bare", str(remote)], check=True)
+    subprocess.run(["git", "init", "--bare", "-b", "main", str(remote)], check=True)
 
     # Copy the scout source tree into the work dir (excluding .git, .venv, output, state, logs)
     repo_root = Path(__file__).resolve().parent.parent.parent

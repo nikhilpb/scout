@@ -9,7 +9,7 @@ from scout.git_publish import publish
 def init_repos(tmp_path: Path) -> tuple[Path, Path]:
     remote = tmp_path / "remote.git"
     work = tmp_path / "work"
-    subprocess.run(["git", "init", "--bare", str(remote)], check=True)
+    subprocess.run(["git", "init", "--bare", "-b", "main", str(remote)], check=True)
     subprocess.run(["git", "init", "-b", "main", str(work)], check=True)
     subprocess.run(["git", "-C", str(work), "remote", "add", "origin", str(remote)], check=True)
     env = {**os.environ,
