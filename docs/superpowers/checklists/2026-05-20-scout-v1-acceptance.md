@@ -6,26 +6,26 @@ with `runner: builtin`, a real model string, and `prompt: { template: briefing }
 
 ## Config and CLI
 
-- [ ] `uv sync` succeeds.
-- [ ] `uv run scout --help` lists: `tick`, `run`, `topics`, `validate`, `doctor`, `feedback`.
-- [ ] `uv run scout validate` exits 0 with a clean topics dir.
-- [ ] Add a malformed topic (`bad.yaml` with a missing required field) → `validate` exits nonzero AND `topics` does not include the bad topic.
-- [ ] `uv run scout topics` prints a table including the test topic with cadence and `last_run=—`.
+- [x] `uv sync` succeeds.
+- [x] `uv run scout --help` lists: `tick`, `run`, `topics`, `validate`, `doctor`, `feedback`.
+- [x] `uv run scout validate` exits 0 with a clean topics dir.
+- [x] Add a malformed topic (`bad.yaml` with a missing required field) → `validate` exits nonzero AND `topics` does not include the bad topic.
+- [x] `uv run scout topics` prints a table including the test topic with cadence and `last_run=—`.
 
 ## Scheduling
 
-- [ ] First `scout tick` after adding a topic marks it due → spawns it.
-- [ ] After a successful run, `scout tick` does NOT respawn it until the next cadence slot.
-- [ ] `scout run --topic test --force` runs regardless of due check.
-- [ ] Running `scout run --topic test` twice concurrently → exactly one runs, the other exits "skipped (locked)".
+- [x] First `scout tick` after adding a topic marks it due → spawns it.
+- [x] After a successful run, `scout tick` does NOT respawn it until the next cadence slot.
+- [x] `scout run --topic test --force` runs regardless of due check.
+- [x] Running `scout run --topic test` twice concurrently → exactly one runs, the other exits "skipped (locked)".
 
 ## Builtin runner (live LLM, dry-run)
 
-- [ ] `uv run scout run --topic test --dry-run --force` produces `output/test/<today>.md` with valid frontmatter.
-- [ ] Frontmatter has non-`unknown` values for `model`, `duration_seconds`, `tool_calls`, `tokens`, `cost_usd`.
-- [ ] The body is a coherent markdown digest matching the briefing template.
-- [ ] No git commit was created (dry-run).
-- [ ] Per-run JSONL exists at `logs/test/<timestamp>.jsonl` and contains `run_start`, `llm_turn` events, at least one `tool_call`, and `run_end` with `status=ok`.
+- [x] `uv run scout run --topic test --dry-run --force` produces `output/test/<today>.md` with valid frontmatter.
+- [x] Frontmatter has non-`unknown` values for `model`, `duration_seconds`, `tool_calls`, `tokens`, `cost_usd`.
+- [x] The body is a coherent markdown digest matching the briefing template.
+- [x] No git commit was created (dry-run).
+- [x] Per-run JSONL exists at `logs/test/<timestamp>.jsonl` and contains `run_start`, `llm_turn` events, at least one `tool_call`, and `run_end` with `status=ok`.
 
 ## Failure modes
 
