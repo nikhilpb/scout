@@ -66,7 +66,10 @@ def publish(
             return
 
         log.warning("push failed (%s); attempting pull --rebase + retry", push.stderr.strip())
-        rebase = _run(["git", "pull", "--rebase", git_cfg.remote, git_cfg.branch], repo_dir)
+        rebase = _run(
+            ["git", "pull", "--rebase", git_cfg.remote, git_cfg.branch],
+            repo_dir, env_extra=author_env,
+        )
         if rebase.returncode != 0:
             log.error("pull --rebase failed: %s", rebase.stderr.strip())
             raise PushDeferred("rebase failed; local commit retained")
