@@ -6,10 +6,29 @@
 Scout is a small, self-hosted tool. You declare topics in YAML. A cron entry
 ticks every 15 minutes. When a topic is due, an LLM agent loop fetches feeds,
 searches the web, fetches pages, optionally drives a headless browser, and
-writes a markdown digest to `output/<slug>/<date>.md`. The digest is committed
-and pushed to your git remote so it's available on any device.
+writes a markdown digest to your **data repo**, which gets committed and
+pushed so the digest is available on any device.
 
 No web UI, no notifications, no SaaS dependency beyond your model provider.
+
+## Two repos: code and data
+
+Scout deliberately splits into two git repositories:
+
+- **Code repo** (this one) — the Python project and the shipped prompt
+  templates. Versioned with code releases.
+- **Data repo** — your topics, your live `scout.toml`, your committed
+  digests, and your per-machine state and logs. You create this once,
+  per deployment, and point Scout at it via `$SCOUT_DATA_DIR` (or `--data-dir`).
+
+Conventionally the data repo lives at `~/git/scout-data` and tracks the
+hostname-agnostic things (topics, digests, config) on its own GitHub remote.
+Per-machine things (`state/`, `logs/`) are gitignored inside it.
+
+Why split? It lets the code travel separately from any one deployment's data,
+keeps generated artifacts out of the Python source tree, and means topic
+edits and digest commits are isolated from code changes. See
+[`docs/setup.md`](./docs/setup.md) for the bootstrap recipe.
 
 ---
 
@@ -34,41 +53,55 @@ No web UI, no notifications, no SaaS dependency beyond your model provider.
 ## How it works
 
 ```
-┌─────────────────┐    every 15 min    ┌──────────────────────┐
-│  cron on host   │ ─────────────────▶ │  scout tick          │
-└─────────────────┘                    │  - load topics/*.yaml │
-                                       │  - compute due set    │
-                                       │  - spawn workers      │
-                                       └──────────┬───────────┘
-                                                  │  uv run scout run --topic <slug>
-                                                  ▼
-                                       ┌──────────────────────┐
-                                       │  scout run (worker)  │
-                                       │  - file-lock topic   │
-                                       │  - dispatch runner   │
-                                       │  - write state       │
-                                       │  - git commit + push │
-                                       └──────────┬───────────┘
-                                                  │
-                              ┌───────────────────┼────────────────────┐
-                              ▼                   ▼                    ▼
-                       ┌────────────┐      ┌────────────┐       ┌────────────┐
-                       │  builtin   │      │ claude-code│       │   codex    │
-                       │  ReAct loop│      │ (subprocess│       │ (subprocess│
-                       │  + tools   │      │   wrapper) │       │   wrapper) │
-                       └─────┬──────┘      └─────┬──────┘       └─────┬──────┘
-                             │                   │                    │
-                             ▼                   ▼                    ▼
-                          output/<slug>/<YYYY-MM-DD>.md
+                                    ┌──────────────────────────────────────┐
+                                    │            HOST                      │
+                                    │                                      │
+┌─────────────────┐   every 15 min  │  ┌─────────────┐                     │
+│  cron on host   │ ──────────────▶ │  │ scout tick  │                     │
+└─────────────────┘                 │  │ (code repo) │                     │
+                                    │  └──────┬──────┘                     │
+                                    │         │ uv run scout run --topic X │
+                                    │         │ --data-dir $SCOUT_DATA_DIR │
+                                    │         ▼                            │
+                                    │  ┌─────────────┐                     │
+                                    │  │ scout run   │  reads topics/,     │
+                                    │  │  (worker)   │  scout.toml         │
+                                    │  └──────┬──────┘                     │
+                                    │         │                            │
+                                    │   ┌─────┴─────┬──────────┐           │
+                                    │   ▼           ▼          ▼           │
+                                    │ builtin   claude-code  codex         │
+                                    │ ReAct loop  subproc    subproc       │
+                                    │  + tools                             │
+                                    └─────────┬────────────────────────────┘
+                                              │ writes
+                                              ▼
+                              ┌──────────────────────────────────┐
+                              │   DATA REPO ($SCOUT_DATA_DIR)    │
+                              │                                  │
+                              │   topics/<slug>.yaml             │
+                              │   output/<slug>/<date>.md  ◀──── digest written here
+                              │   state/<slug>.json   (gitignored)
+                              │   logs/<slug>/*.jsonl (gitignored)
+                              │   scout.toml                     │
+                              └─────────┬────────────────────────┘
+                                        │ git commit + push
+                                        ▼
+                                ┌────────────────┐
+                                │  data git      │   (GitHub, etc.)
+                                │  remote        │
+                                └────────────────┘
 ```
 
-The orchestrator (`scout tick`) is stateless: it reads `state/<slug>.json` for
-each topic, computes `next_due` with `croniter`, and spawns a subprocess for
-each topic that is due. Per-topic file locks make concurrent runs of the same
-topic safe; a global cap (default 3) limits total in-flight workers.
+The orchestrator (`scout tick`) is stateless: it reads `state/<slug>.json`
+inside the data repo for each topic, computes `next_due` with `croniter`, and
+spawns a subprocess per due topic. Each worker passes `--data-dir` to its
+child so the whole tick uses one consistent data root. Per-topic file locks
+make concurrent runs of the same topic safe; a global cap (default 3) limits
+total in-flight workers.
 
-The default `builtin` runner is a thin, provider-agnostic ReAct loop on top of
-[LiteLLM](https://docs.litellm.ai/) — model strings like
+The default `builtin` runner is a thin, provider-agnostic ReAct loop on top
+of [LiteLLM](https://docs.litellm.ai/) — model strings like
 `anthropic/claude-sonnet-4-6`, `openai/gpt-4o`, `gemini/gemini-2.5-flash` all
 work. Two alternative runners shell out to the `claude` (Claude Code) or
 `codex` CLIs if you'd rather rely on those.
@@ -86,24 +119,49 @@ work. Two alternative runners shell out to the `claude` (Claude Code) or
 - A `BRAVE_SEARCH_API_KEY` if you want the `web_search` tool to function.
 - (Optional) `playwright install chromium` if any topic uses `browser_use`.
 
-### Install
+### 1. Install the code repo
 
 ```bash
-git clone <your-fork-or-this-repo>
-cd scout
+git clone https://github.com/<you>/scout.git ~/git/scout
+cd ~/git/scout
 uv sync
 ```
 
-Create a `.env` at the repo root (gitignored):
+Put provider credentials in `~/git/scout/.env` (gitignored):
 
 ```bash
 ANTHROPIC_API_KEY=sk-ant-...
 BRAVE_SEARCH_API_KEY=...
 ```
 
-### Define a topic
+### 2. Bootstrap the data repo
 
-Create `topics/ai-research.yaml`:
+```bash
+mkdir -p ~/git/scout-data/{topics,output,state,logs}
+cd ~/git/scout-data
+git init -b main
+cp ~/git/scout/scout.toml.example ./scout.toml
+printf "state/\nlogs/\n" > .gitignore
+git add .
+git commit -m "scout-data: initial layout"
+
+# Optional: push to your own GitHub remote so digests sync across machines.
+# git remote add origin git@github.com:<you>/scout-data.git
+# git push -u origin main
+```
+
+### 3. Point Scout at the data repo
+
+```bash
+export SCOUT_DATA_DIR=~/git/scout-data
+```
+
+Add that line to your shell rc so it's set for every session and for cron.
+Alternatively, pass `--data-dir ~/git/scout-data` on every invocation.
+
+### 4. Define a topic
+
+Create `~/git/scout-data/topics/ai-research.yaml`:
 
 ```yaml
 title: "AI research"
@@ -120,32 +178,35 @@ sources:
   - { type: search, query: "frontier AI research this week" }
 ```
 
-### Validate and dry-run
+### 5. Validate and dry-run
 
 ```bash
+cd ~/git/scout
 uv run scout validate                          # schema-check all topics
 uv run scout topics                            # status table
 uv run scout run --topic ai-research --force --dry-run
 ```
 
-`--force` bypasses the cadence check. `--dry-run` skips the git commit/push so
-you can inspect `output/ai-research/<today>.md` before wiring up cron.
+`--force` bypasses the cadence check. `--dry-run` skips the git commit/push
+so you can inspect `~/git/scout-data/output/ai-research/<today>.md` before
+wiring up cron.
 
-### Wire up cron
+### 6. Wire up cron
 
 ```cron
-*/15 * * * * cd /path/to/scout && uv run scout tick >> logs/tick.log 2>&1
+*/15 * * * * SCOUT_DATA_DIR=/home/you/git/scout-data cd /home/you/git/scout && uv run scout tick >> /home/you/git/scout-data/logs/tick.log 2>&1
 ```
 
-That's it. Scout now produces digests on the cadence you declared and pushes
-them to your git remote.
+`cd` into the code repo so `uv run` finds the project; pass the data root as
+an env var so children inherit it. That's it — Scout now produces digests on
+the cadence you declared and pushes them to your data-repo remote.
 
 ---
 
 ## Configuring topics
 
-One YAML file per topic in `topics/`. The filename stem is the slug (used as a
-URL-safe identifier, directory name in `output/`, and key in state).
+One YAML file per topic in `$SCOUT_DATA_DIR/topics/`. The filename stem is
+the slug (used as the directory name in `output/` and as the key in state).
 
 | Field           | Required | Notes |
 |-----------------|----------|-------|
@@ -154,7 +215,7 @@ URL-safe identifier, directory name in `output/`, and key in state).
 | `cadence`       | yes      | 5-field cron expression. `next_due = croniter(cadence).get_next(last_run)`. |
 | `runner`        | no       | `builtin` (default), `claude-code`, or `codex`. |
 | `model`         | builtin only | LiteLLM model string. Required for `builtin`; ignored (with warning) for CLI runners. |
-| `prompt`        | yes      | Exactly one of `template:` (file stem under `prompts/`) or `inline:` (literal body with `{{vars}}`). |
+| `prompt`        | yes      | Exactly one of `template:` (file stem under `prompts/` in the code repo) or `inline:` (literal body with `{{vars}}`). |
 | `sources`       | no       | Seed list of `{type: rss|web|search, url|query}`. **Not exhaustive** — the agent is free to discover more. |
 | `tools`         | builtin only | Allowlist subset of supported tools. Defaults to everything except `browser_use`. |
 | `limits.timeout_seconds` | no | Wall-clock budget for a single run. Falls back to `scout.toml`. |
@@ -167,13 +228,16 @@ Filename must match `^[a-z0-9][a-z0-9-]*\.yaml$`. Validation also enforces:
 - `runner ∈ {builtin, claude-code, codex}`.
 - `model` is required when `runner: builtin`.
 - Exactly one of `prompt.template` / `prompt.inline`.
-- `prompt.template` (when set) must exist as a file in `prompts/`.
+- `prompt.template` (when set) must exist as a file in the code repo's `prompts/`.
 - `tools` (when set) must be a subset of the builtin runner's tool registry.
 - `limits.timeout_seconds` (when set) must be a positive integer.
 
 `scout validate` runs all of this and exits non-zero on any failure.
 
 ### Shipped prompt templates
+
+Templates ship with the code repo, in `prompts/`. They're not duplicated into
+the data repo — topics reference them by stem.
 
 | Template     | Shape |
 |--------------|-------|
@@ -221,9 +285,9 @@ to enable it.
 
 ## Output format
 
-Each successful run writes a file to `output/<slug>/<YYYY-MM-DD>.md`. The
-runner writes the file; the agent writes only the body. The runner prepends
-YAML frontmatter:
+Each successful run writes a file to
+`$SCOUT_DATA_DIR/output/<slug>/<YYYY-MM-DD>.md`. The runner writes the file;
+the agent writes only the body. The runner prepends YAML frontmatter:
 
 ```markdown
 ---
@@ -270,8 +334,8 @@ missed:
 -->
 ```
 
-Commit and push. Scout never modifies an existing digest, so your edits are
-always safe.
+Commit and push **inside the data repo**. Scout never modifies an existing
+digest, so your edits are always safe.
 
 In v1, feedback is **captured but not auto-incorporated** — the agent doesn't
 yet read prior feedback when planning the next run. The format is documented
@@ -287,6 +351,10 @@ Convenience commands:
 ---
 
 ## CLI reference
+
+All commands accept a global `--data-dir <path>` flag, which overrides
+`$SCOUT_DATA_DIR`. If neither is set, Scout exits with
+`scout: no data directory configured: set $SCOUT_DATA_DIR or pass --data-dir`.
 
 | Command                                       | Purpose |
 |-----------------------------------------------|---------|
@@ -306,39 +374,54 @@ All commands take `--help`.
 
 Scout is designed for a long-lived Linux host. Recommended setup:
 
-1. **Clone and sync.** `git clone …; cd scout; uv sync`.
-2. **Provider creds.** Put them in `.env` at the repo root (gitignored).
-3. **Optional: Playwright.** Only if any topic uses `browser_use`:
+1. **Clone and sync the code repo.** `git clone …; cd scout; uv sync`.
+2. **Bootstrap the data repo** (see [Quick start §2](#2-bootstrap-the-data-repo)).
+3. **Provider creds.** In `.env` at the code repo root (gitignored).
+4. **Optional: Playwright.** Only if any topic uses `browser_use`:
    `uv run playwright install chromium`.
-4. **Git push credentials.** Whatever the host already provides — an SSH key
-   or an HTTPS credential helper / PAT in the remote URL. Scout calls
-   `git push` and does not manage credentials itself.
-5. **Cron.**
+5. **Git push credentials for the data repo.** Whatever the host already
+   provides — an SSH key or an HTTPS credential helper / PAT in the data
+   repo's remote URL. Scout calls `git push` inside the data repo; it does
+   not manage credentials itself. The code repo is never touched by Scout
+   at runtime.
+6. **Cron.**
    ```cron
-   */15 * * * * cd /path/to/scout && uv run scout tick >> logs/tick.log 2>&1
+   */15 * * * * SCOUT_DATA_DIR=/home/you/git/scout-data cd /home/you/git/scout && uv run scout tick >> /home/you/git/scout-data/logs/tick.log 2>&1
    ```
-6. **Verify.** Watch `logs/tick.log` after the first tick; `scout topics` and
-   `scout doctor` show health.
+7. **Verify.** Watch `$SCOUT_DATA_DIR/logs/tick.log` after the first tick;
+   `scout topics` and `scout doctor` show health.
 
-### What gets committed vs what's local-only
+### What's tracked where
 
-| Committed                            | Gitignored                       |
-|--------------------------------------|----------------------------------|
-| `src/`, `pyproject.toml`, `uv.lock`  | `.venv/`, `__pycache__/`         |
-| `topics/*.yaml`                      | `state/` (per-topic JSON, locks) |
-| `prompts/*.md`                       | `logs/` (per-run JSONL, tick log)|
-| `scout.toml`                         | `.env` (secrets)                 |
-| `output/**/*.md`                     |                                  |
-| `spec.md`, `AGENTS.md`               |                                  |
+**Code repo** (this one) — versioned with code releases:
 
-### Git publish flow
+| Tracked                                | Not tracked              |
+|----------------------------------------|--------------------------|
+| `src/`, `pyproject.toml`, `uv.lock`    | `.venv/`, `__pycache__/` |
+| `prompts/*.md`                         | `.env` (secrets)         |
+| `scout.toml.example`                   |                          |
+| `spec.md`, `AGENTS.md`, `docs/`        |                          |
+
+**Data repo** (at `$SCOUT_DATA_DIR`) — your deployment's data:
+
+| Tracked                                | Not tracked                       |
+|----------------------------------------|-----------------------------------|
+| `topics/*.yaml`                        | `state/` (per-machine, per-topic) |
+| `output/**/*.md`                       | `logs/` (per-machine)             |
+| `scout.toml`                           |                                   |
+
+Scout commits and pushes only files under `$SCOUT_DATA_DIR/output/`. Topic
+YAMLs and `scout.toml` you edit and commit yourself.
+
+### Git publish flow (inside the data repo)
 
 After `write_digest` succeeds, the runner:
 
 1. Acquires the repo-level lock `state/.publish.lock`.
-2. `git add output/<slug>/<file>.md`.
-3. `git commit -m "digest(<slug>): <YYYY-MM-DD>" --author "<name> <<email>>"`.
-4. `git push`. On failure, one `git pull --rebase` then retry the push.
+2. `git -C $SCOUT_DATA_DIR add output/<slug>/<file>.md`.
+3. `git -C $SCOUT_DATA_DIR commit -m "digest(<slug>): <YYYY-MM-DD>" --author "<name> <<email>>"`.
+4. `git -C $SCOUT_DATA_DIR push`. On failure, one `git pull --rebase` then
+   retry the push.
 5. If still failing: log the error and accept the local commit. The next
    successful run reconciles.
 
@@ -348,7 +431,11 @@ One commit per successful run. Failed runs produce no commit.
 
 ## Configuration reference
 
-### Global defaults — `scout.toml`
+### Global defaults — `scout.toml` (in the data repo)
+
+The shipped `scout.toml.example` (in the code repo) is the template; on
+bootstrap you copy it into the data repo and edit your live values there.
+Topic YAMLs override these per-key.
 
 ```toml
 [defaults]
@@ -370,9 +457,7 @@ branch = "main"
 # this section is reserved for future overrides.
 ```
 
-Topic-level fields override these per-key.
-
-### Per-topic state — `state/<slug>.json`
+### Per-topic state — `state/<slug>.json` (in the data repo, gitignored)
 
 ```json
 {
@@ -387,27 +472,38 @@ Topic-level fields override these per-key.
 update state — they're a process exit, not a stored outcome. Failed runs do
 not auto-retry; they wait for the next cadence slot (or `--force`).
 
+State is intentionally per-machine and gitignored: two hosts running the
+same data repo each maintain their own cadence cursors and don't fight each
+other on locks.
+
 ### Logs
 
-- **Per-run JSONL** at `logs/<slug>/<YYYY-MM-DD-HHMMSS>.jsonl`. One event per
-  line: `run_start`, `llm_turn`, `tool_call`, `tool_error`, `write_digest`,
-  `run_end`. For CLI runners, captured subprocess output appears as
-  `subprocess_output` events.
-- **Tick log** at `logs/tick.log`. One summary line per tick. Cron appends
-  stdout/stderr here.
+- **Per-run JSONL** at `$SCOUT_DATA_DIR/logs/<slug>/<YYYY-MM-DD-HHMMSS>.jsonl`.
+  One event per line: `run_start`, `llm_turn`, `tool_call`, `tool_error`,
+  `write_digest`, `run_end`. For CLI runners, captured subprocess output
+  appears as `subprocess_output` events.
+- **Tick log** at `$SCOUT_DATA_DIR/logs/tick.log`. One summary line per tick.
+  Cron appends stdout/stderr here.
+
+Both are gitignored in the data repo.
 
 ---
 
 ## Repository layout
 
+### Code repo
+
 ```
 scout/
 ├── pyproject.toml              # uv project
-├── scout.toml                  # global defaults
-├── spec.md                     # full design spec (authoritative)
+├── scout.toml.example          # template; copied into the data repo on setup
+├── spec.md                     # original design spec (now partially stale; see Design notes)
 ├── AGENTS.md                   # one-line project description (symlinked as CLAUDE.md)
+├── docs/
+│   └── setup.md                # bootstrap recipe for code + data repos
 ├── src/scout/
 │   ├── cli.py                  # tick | run | topics | validate | doctor | feedback
+│   ├── paths.py                # DataPaths value object + resolve()
 │   ├── orchestrator.py         # `scout tick`: due-set + worker pool
 │   ├── worker.py               # `scout run --topic`: lock, dispatch, publish
 │   ├── scheduler.py            # croniter-based is-due logic
@@ -424,26 +520,39 @@ scout/
 │   ├── state.py                # last-run state read/write + locks
 │   ├── runlog.py               # per-run JSONL emitter
 │   ├── output.py               # frontmatter assembly + digest write
-│   ├── git_publish.py          # commit + push of output/
+│   ├── git_publish.py          # commit + push inside the data repo
 │   ├── feedback.py             # inline-feedback parser & CLI helpers
 │   └── doctor.py               # 7-day health summary
-├── topics/                     # user-edited, one YAML per topic
 ├── prompts/                    # shipped templates (headlines, briefing, sectioned)
-├── state/                      # gitignored
-├── logs/                       # gitignored
-├── output/                     # committed; output/<slug>/<YYYY-MM-DD>.md
 └── tests/                      # unit, integration, fixtures, fakes
 ```
 
-Module boundaries are deliberately tight:
+### Data repo (at `$SCOUT_DATA_DIR`)
 
+```
+scout-data/
+├── scout.toml                  # live config (global defaults, git identity, etc.)
+├── topics/                     # user-edited, one YAML per topic
+│   └── ai-research.yaml
+├── output/                     # committed; <slug>/<YYYY-MM-DD>.md
+├── state/                      # gitignored (per-machine)
+├── logs/                       # gitignored (per-machine)
+└── .gitignore                  # state/, logs/
+```
+
+### Module boundaries (code repo)
+
+Deliberately tight:
+
+- `paths` is the only module that resolves the data-dir from CLI / env.
+  Everything downstream takes a `DataPaths` value object.
 - `scheduler` knows nothing about agents or LLMs — pure config + state + time math.
 - `runner` decides which implementation handles a topic; doesn't run agent code itself.
 - `runners/builtin` owns the in-process loop; internals live in `agent/`.
 - `runners/claude_code` and `runners/codex` are thin subprocess wrappers.
 - `agent/loop` talks only to `agent/llm` and the tool registry; provider-agnostic.
 - Each `agent/tools/*.py` is exactly one tool.
-- `git_publish` is the only module that touches git.
+- `git_publish` is the only module that touches git, and only inside the data repo.
 - `feedback` reads digest markdown only; never modifies it.
 
 ---
@@ -458,49 +567,63 @@ uv run pytest -m smoke             # real-LLM smoke tests; needs GOOGLE_API_KEY
 uv run ruff check .
 ```
 
+Tests build their own ephemeral `DataPaths` over `tmp_path` — they don't
+require a real data repo to be present.
+
 CI (`.github/workflows/ci.yml`) runs `ruff check` and
 `pytest -m 'not browser and not smoke'` on every push and PR.
 
 ### Test tiers
 
 - **Unit** (`tests/unit/`) — fast, deterministic. Config parsing, scheduler,
-  state, tool schemas, feedback parser, frontmatter assembly.
+  state, tool schemas, feedback parser, frontmatter assembly, data-dir
+  resolution.
 - **Integration** (`tests/integration/`) — fixture-backed end-to-end. Agent
   loop with `FakeLLMClient`, network tools against recorded HTTP, full
-  `scout run` wiring.
+  `scout run` wiring against a temp data repo + temp bare git remote.
 - **Browser** (`@pytest.mark.browser`) — Playwright tests; skipped by
   default.
 - **Smoke** (`@pytest.mark.smoke`) — real-LLM, real-tools end-to-end. Manual.
 
-There are **no digest-quality evals in v1**. Quality is judged by reading the
-output.
+There are **no digest-quality evals in v1**. Quality is judged by reading
+the output.
 
 ---
 
 ## Design notes
 
-A few choices that may look surprising on first read; the [`spec.md`](./spec.md)
-has full reasoning.
+A few choices that may look surprising on first read:
 
-- **Sources are seeds, not an allowlist.** The agent is free to discover more
-  via `web_search` and `fetch_url`. The seed list anchors the topic and gives
-  the agent a starting point.
-- **No content-hash / seen-URL dedupe store.** Deduplication is delegated to
-  the LLM via the `read_history` tool. The agent reads recent prior digests
-  and uses semantic judgment to avoid repetition. State stays trivial; the
-  agent handles "same story, different headline" without brittle URL matching.
-- **No cost cap.** Wall-clock timeout is the only hard limit. Cost is logged,
-  not enforced.
+- **Code and data are separate repos.** It lets the code travel separately
+  from any one deployment's data, keeps generated artifacts out of the
+  Python source tree, and makes topic-edit / digest commits independent of
+  code changes. State and logs are per-machine and stay gitignored inside
+  the data repo, so multiple hosts can share the same data remote without
+  fighting each other.
+- **Sources are seeds, not an allowlist.** The agent is free to discover
+  more via `web_search` and `fetch_url`. The seed list anchors the topic and
+  gives the agent a starting point.
+- **No content-hash / seen-URL dedupe store.** Deduplication is delegated
+  to the LLM via the `read_history` tool. The agent reads recent prior
+  digests and uses semantic judgment to avoid repetition. State stays
+  trivial; the agent handles "same story, different headline" without
+  brittle URL matching.
+- **No cost cap.** Wall-clock timeout is the only hard limit. Cost is
+  logged, not enforced.
 - **No live notifications.** `scout topics` and `scout doctor` cover the
-  health-check use case. A daily summary email is a small addition later if
-  silent failures become a problem.
+  health-check use case. A daily summary email is a small addition later
+  if silent failures become a problem.
 - **Asymmetric observability.** The `builtin` runner logs LLM turns, tool
   calls, tokens, and cost in full. CLI runners are opaque subprocesses;
   those fields appear as `unknown` in frontmatter and logs. This is the
   accepted cost of pluggable external runners.
 - **No auto-incorporation of feedback in v1.** Feedback is captured in a
-  documented format and surfaces naturally via `read_history` — v2 can wire
-  in auto-incorporation with no new plumbing.
+  documented format and surfaces naturally via `read_history` — v2 can
+  wire in auto-incorporation with no new plumbing.
 
-For the full design, including failure-mode tables and rationale, see
-[`spec.md`](./spec.md).
+> **Note on `spec.md`.** The original design spec was written for the v1
+> implementation, before the code/data repo split. The boundaries, agent
+> loop, tool surface, and runners it describes are still accurate; the
+> repo-layout, paths, and bootstrap sections in §2.2 and §3.2 have been
+> updated, but the rest of `spec.md` has not been kept in lockstep. When
+> the two disagree, this README and the code are the source of truth.

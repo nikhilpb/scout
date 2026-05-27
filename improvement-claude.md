@@ -87,11 +87,16 @@ few lines; the value is keeping the docs honest.
 
 ## Developer experience
 
-13. **`spec.md` is 580 lines and is the authoritative source of truth.**
-    - That's fine for design, less fine for new contributors. Most readers
-      land on the README first now (good), but a small `docs/architecture.md`
-      that summarizes the module boundaries in code-link form would be a
-      cheap bridge.
+13. **`spec.md` has drifted from the implementation.**
+    - The data-repo split (separate code repo + `$SCOUT_DATA_DIR`) updated
+      §2.2 and §3.2, but most of `spec.md` was not revisited after v1
+      landed. Readers who land there first get a partially-stale picture.
+      Two options: (a) trim `spec.md` down to "original design rationale"
+      and clearly mark it as historical (date the doc, add a header
+      pointing to README and `docs/setup.md` as the live source); or (b)
+      do a top-to-bottom pass to bring it back in line. (a) is the cheaper
+      and probably-correct choice — design docs decay; living docs are
+      maintained on a different schedule than the code.
 
 14. **No `CHANGELOG.md`.**
     - Single-user project, but with `version = "0.1.0"` already in
