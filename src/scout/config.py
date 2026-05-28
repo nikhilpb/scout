@@ -30,30 +30,20 @@ class Scheduler:
 
 
 @dataclass(frozen=True)
-class Git:
-    author_name: str = "Scout"
-    author_email: str = "scout@localhost"
-    remote: str = "origin"
-    branch: str = "main"
-
-
-@dataclass(frozen=True)
 class GlobalConfig:
     defaults: Defaults
     scheduler: Scheduler
-    git: Git
 
 
 def load_global_config(path: Path) -> GlobalConfig:
     if not path.exists():
-        return GlobalConfig(Defaults(), Scheduler(), Git())
+        return GlobalConfig(Defaults(), Scheduler())
     try:
         with path.open("rb") as f:
             data = tomllib.load(f)
         return GlobalConfig(
             defaults=Defaults(**data.get("defaults", {})),
             scheduler=Scheduler(**data.get("scheduler", {})),
-            git=Git(**data.get("git", {})),
         )
     except tomllib.TOMLDecodeError as e:
         raise ConfigError(f"invalid TOML in {path}: {e}") from e

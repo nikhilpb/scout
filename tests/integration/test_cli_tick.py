@@ -1,6 +1,5 @@
 import os
 import stat
-import subprocess
 import textwrap
 from datetime import datetime, timezone
 
@@ -9,12 +8,6 @@ import pytest
 
 @pytest.mark.integration
 def test_tick_runs_due_topics(tmp_path, monkeypatch):
-    subprocess.run(["git", "init", "-b", "main", str(tmp_path)], check=True)
-    env = {**os.environ,
-           "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
-           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
-    subprocess.run(["git", "-C", str(tmp_path), "commit", "--allow-empty", "-m", "init"],
-                   check=True, env=env)
     (tmp_path / "topics").mkdir()
     (tmp_path / "topics" / "ai.yaml").write_text(textwrap.dedent("""
         title: AI
