@@ -201,16 +201,21 @@ cd /path/to
 git clone https://github.com/<you>/scout-data.git scout-data
 ```
 
-For a new data repo:
+For a new data repo, scaffold it with `scout init` (creates the directory
+layout, `scout.toml`, and `.gitignore`):
 
 ```bash
-mkdir -p scout-data/{topics,output,state,logs}
-cd scout-data
+uv --project /path/to/scout run scout init /path/to/scout-data
+```
+
+Optionally make it a git repo and push:
+
+```bash
+cd /path/to/scout-data
 git init -b main
-printf "state/\nlogs/\n" > .gitignore
-cp ../scout/scout.toml ./scout.toml
-git add .gitignore scout.toml
+git add .
 git commit -m "scout-data: initial layout"
+# git remote add origin git@github.com:<you>/scout-data.git && git push -u origin main
 ```
 
 Check the CLI while using the data repo as the working directory:
