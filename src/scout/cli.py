@@ -25,6 +25,24 @@ def _cmd_validate(args: argparse.Namespace, data: DataPaths) -> int:
     return 0 if failures == 0 else 1
 
 
+def _cmd_init(args: argparse.Namespace) -> int:
+    from scout.bootstrap import BootstrapError, init_data_repo, resolve_init_root
+
+    try:
+        root = resolve_init_root(args.path, args.data_dir)
+        root = init_data_repo(root)
+    except BootstrapError as e:
+        print(f"scout: {e}", file=sys.stderr)
+        return 2
+    print(f"created data repo at {root}")
+    print("next steps:")
+    print(f"  export SCOUT_DATA_DIR={root}")
+    print(f"  add topic YAMLs under {root / 'topics'}")
+    print('  (optional) git init -b main && git add . && '
+          'git commit -m "scout-data: initial layout"')
+    return 0
+
+
 def _fmt(v) -> str:
     return "—" if v is None else str(v)
 
@@ -73,6 +91,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     sub = parser.add_subparsers(dest="command")
 
+    init_p = sub.add_parser("init", help="create an empty data repo")
+    init_p.add_argument(
+        "path",
+        nargs="?",
+        default=None,
+        help="target directory (default: --data-dir or $SCOUT_DATA_DIR)",
+    )
+
     sub.add_parser("validate", help="schema-check all topic configs")
     sub.add_parser("topics", help="status table across topics")
 
@@ -99,6 +125,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.command is None:
         parser.print_help()
         return 0
+
+    # `init` creates the data dir, so it must run before DataPaths.resolve(),
+    # which requires the directory to already exist.
+    if args.command == "init":
+        return _cmd_init(args)
 
     try:
         data = DataPaths.resolve(args.data_dir)

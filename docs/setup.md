@@ -13,19 +13,19 @@ git clone https://github.com/<you>/scout.git ~/git/scout
 cd ~/git/scout
 uv sync
 
-# 2. Create the data repo
-mkdir -p ~/git/scout-data/{topics,output,state,logs}
+# 2. Scaffold the data repo (creates the dirs, scout.toml, and .gitignore)
+uv run scout init ~/git/scout-data
+
+# 3. (optional) make it a git repo and push
 cd ~/git/scout-data
 git init -b main
-cp ~/git/scout/scout.toml.example ./scout.toml
-printf "state/\nlogs/\n" > .gitignore
 git add .
 git commit -m "scout-data: initial layout"
 # create a GitHub repo and push
 # git remote add origin git@github.com:<you>/scout-data.git
 # git push -u origin main
 
-# 3. Point scout at the data repo
+# 4. Point scout at the data repo
 export SCOUT_DATA_DIR=~/git/scout-data
 ```
 
