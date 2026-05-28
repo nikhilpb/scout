@@ -12,8 +12,7 @@ Scout is meant to run with two repositories:
 You define topics in the data repo, Scout decides when each topic is due, an
 agent gathers material from configured seed sources and the open web, and the
 result is written to the data repo's `output/` directory as Markdown with YAML
-frontmatter. Scout only writes files; you commit and push changes in the data
-repo yourself.
+frontmatter.
 
 ## Contents
 
@@ -88,9 +87,8 @@ scout-data/
 `-- logs/
 ```
 
-Scout writes digests to the data repo's `output/` directory; you commit and push
-them yourself. Its `state/` and `logs/` directories are local runtime artifacts
-and should be ignored by git.
+Scout writes digests to the data repo's `output/` directory. Its `state/` and
+`logs/` directories hold local runtime artifacts.
 
 In this checkout, the practical layout is:
 
@@ -278,8 +276,7 @@ Or let `tick` run all due topics:
 uv --project ../scout run scout tick
 ```
 
-Scout writes the digest and updates local topic state in the data repo. Commit
-and push the new output yourself when you're satisfied with it.
+Scout writes the digest and updates local topic state in the data repo.
 
 ## Topic Configuration
 
@@ -700,9 +697,6 @@ Each line is an event such as:
 - `run_end`
 
 `logs/` is gitignored.
-
-Scout does not touch version control. It only writes files under the data repo's
-`output/` and `state/` directories; committing and pushing them is up to you.
 
 ## Feedback Workflow
 
