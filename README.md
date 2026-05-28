@@ -12,8 +12,8 @@ Scout is meant to run with two repositories:
 You define topics in the data repo, Scout decides when each topic is due, an
 agent gathers material from configured seed sources and the open web, and the
 result is written to the data repo's `output/` directory as Markdown with YAML
-frontmatter. On successful non-dry runs, Scout commits and pushes the digest in
-the data repo, not in the code repo.
+frontmatter. Scout only writes files; you commit and push changes in the data
+repo yourself.
 
 ## Contents
 
@@ -54,8 +54,6 @@ Core behavior:
   tool calls, token usage, and cost when available.
 - Stores local run state in the data repo's `state/` directory and per-run
   JSONL logs in its `logs/` directory.
-- Commits and pushes successful digest files to the data repo's configured git
-  remote.
 - Provides CLI helpers for validation, status, health checks, and inline
   feedback capture.
 
@@ -90,9 +88,9 @@ scout-data/
 `-- logs/
 ```
 
-The data repo is the repository Scout publishes to. Its `output/` files are
-committed and pushed. Its `state/` and `logs/` directories are local runtime
-artifacts and should be ignored by git.
+Scout writes digests to the data repo's `output/` directory; you commit and push
+them yourself. Its `state/` and `logs/` directories are local runtime artifacts
+and should be ignored by git.
 
 In this checkout, the practical layout is:
 
@@ -145,7 +143,6 @@ For one topic, the worker:
 2. Dispatches to the configured runner.
 3. Writes a digest under the data repo's `output/<slug>/`.
 4. Updates the data repo's `state/<slug>.json` with success or failure.
-5. Commits and pushes the data repo output file unless `--dry-run` was used.
 
 For the default `builtin` runner, Scout owns the whole agent loop through
 LiteLLM. The model can call Scout's tool registry, gather context, and finishes
@@ -257,10 +254,10 @@ Validate topic config:
 uv --project ../scout run scout validate
 ```
 
-Run the topic once without publishing:
+Run the topic once:
 
 ```bash
-uv --project ../scout run scout run --topic ai-research --force --dry-run
+uv --project ../scout run scout run --topic ai-research --force
 ```
 
 Inspect the result:
@@ -275,20 +272,14 @@ Check topic status:
 uv --project ../scout run scout topics
 ```
 
-When the topic looks good, run it normally:
-
-```bash
-uv --project ../scout run scout run --topic ai-research --force
-```
-
 Or let `tick` run all due topics:
 
 ```bash
 uv --project ../scout run scout tick
 ```
 
-Important: `--dry-run` skips git commit and push, but it still executes the
-runner, writes local output, and updates local topic state in the data repo.
+Scout writes the digest and updates local topic state in the data repo. Commit
+and push the new output yourself when you're satisfied with it.
 
 ## Topic Configuration
 
@@ -431,12 +422,6 @@ timeout_seconds = 300
 [scheduler]
 max_concurrent_workers = 3
 
-[git]
-author_name  = "Scout"
-author_email = "scout@localhost"
-remote = "origin"
-branch = "main"
-
 [llm]
 # Reserved for future overrides.
 ```
@@ -447,8 +432,6 @@ Current behavior to know:
   `scout tick`.
 - `defaults.timeout_seconds` is used when a topic does not set
   `limits.timeout_seconds`.
-- `git` controls commit author, remote, and branch for publishing from the data
-  repo.
 - Built-in topics currently still need an explicit `model` field in their YAML.
 
 ## Runners
@@ -473,8 +456,7 @@ Requires:
 ### `claude-code`
 
 Runs the external Claude Code CLI as a subprocess. Scout asks the CLI to write
-the digest into the topic output directory, then Scout adds frontmatter and
-publishes it.
+the digest into the topic output directory, then Scout adds frontmatter.
 
 Use it when you want Claude Code's own tool behavior instead of Scout's
 built-in loop.
@@ -584,13 +566,11 @@ uv --project ../scout run scout run --topic ai-research
 Options:
 
 - `--force`: bypass due-check logic and run now.
-- `--dry-run`: execute and write local output, but skip git publish.
 
 Examples:
 
 ```bash
 uv --project ../scout run scout run --topic ai-research --force
-uv --project ../scout run scout run --topic ai-research --force --dry-run
 ```
 
 ### `scout tick`
@@ -721,21 +701,8 @@ Each line is an event such as:
 
 `logs/` is gitignored.
 
-### Git Publishing
-
-On successful non-dry runs, Scout operates inside the data repo and:
-
-1. Acquires a repo-level publish lock.
-2. Runs `git add` for the digest file.
-3. Creates a commit named `digest(<slug>): <YYYY-MM-DD>`.
-4. Pushes to the configured remote and branch.
-5. If push fails, runs one `git pull --rebase` and retries the push.
-
-If the retry still fails, Scout leaves the local commit in place and reports
-`push deferred`. A later successful run can reconcile with the remote.
-
-Scout does not manage git credentials. Configure SSH keys, HTTPS credentials, or
-your credential helper for the data repo outside Scout.
+Scout does not touch version control. It only writes files under the data repo's
+`output/` and `state/` directories; committing and pushing them is up to you.
 
 ## Feedback Workflow
 
@@ -756,8 +723,8 @@ Scout can append these blocks with `scout feedback add` and list them with
 `scout feedback list`.
 
 In v1, feedback is captured but not automatically incorporated into future
-prompts. Because feedback lives in the digest file, it is carried through git
-and can later be read by agents through history.
+prompts. Because feedback lives in the digest file, it stays alongside the
+digest and can later be read by agents through history.
 
 ## Running on a Schedule
 
@@ -866,7 +833,6 @@ scout/
 |   |-- output.py
 |   |-- state.py
 |   |-- runlog.py
-|   |-- git_publish.py
 |   |-- doctor.py
 |   `-- feedback.py
 `-- tests/
@@ -888,14 +854,11 @@ scout-data/
 Important boundaries:
 
 - `scheduler.py` handles due-time logic only.
-- `worker.py` owns one-topic execution, data-repo state updates, and
-  publishing.
+- `worker.py` owns one-topic execution and data-repo state updates.
 - `orchestrator.py` implements `scout tick`.
 - `runner.py` selects a runner implementation.
 - `runners/builtin.py` wires the LiteLLM agent loop.
 - `agent/tools/` contains one built-in tool per file.
-- `git_publish.py` is the only module that shells out to git for publishing,
-  and it should operate on the data repo.
 - `feedback.py` parses and appends inline feedback blocks.
 
 ## Troubleshooting
@@ -904,14 +867,13 @@ Important boundaries:
 
 Set `BRAVE_SEARCH_API_KEY` in the environment used to run Scout.
 
-For a dry run:
+To run it once for inspection:
 
 ```bash
 cd /path/to/scout-data
 BRAVE_SEARCH_API_KEY=... uv --project /path/to/scout run scout run \
   --topic ai-research \
-  --force \
-  --dry-run
+  --force
 ```
 
 ### Built-in runner fails before writing a digest
@@ -941,7 +903,7 @@ uv --project /path/to/scout run scout topics
 Run manually if you want to bypass cadence:
 
 ```bash
-uv --project /path/to/scout run scout run --topic <slug> --force --dry-run
+uv --project /path/to/scout run scout run --topic <slug> --force
 ```
 
 ### A topic is skipped as locked
@@ -949,17 +911,3 @@ uv --project /path/to/scout run scout run --topic <slug> --force --dry-run
 Another process already holds `state/<slug>.lock`. This is normal when two runs
 overlap. If no Scout process is running and the message persists, inspect the
 host process table before deleting lock files.
-
-### Push is deferred
-
-Scout created the local digest commit but could not push after a rebase retry.
-Inspect git state directly:
-
-```bash
-cd /path/to/scout-data
-git status
-git log --oneline --decorate -5
-git push origin main
-```
-
-Adjust the remote or branch if your deployment does not use `origin main`.

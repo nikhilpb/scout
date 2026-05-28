@@ -6,12 +6,6 @@ timeout_seconds = 300
 [scheduler]
 max_concurrent_workers = 3
 
-[git]
-author_name  = "Scout"
-author_email = "scout@localhost"
-remote = "origin"
-branch = "main"
-
 [llm]
 # LiteLLM credentials read from env vars by convention;
 # this section is reserved for future overrides.

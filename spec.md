@@ -1,6 +1,6 @@
 # Scout — Design Spec
 
-A personal news agent that produces scheduled, per-topic markdown digests by gathering content from RSS feeds, the open web, and web search, then summarizing through an LLM agent loop. Output is committed to a git repo for cross-device access. Designed to run on a long-lived Linux host.
+A personal news agent that produces scheduled, per-topic markdown digests by gathering content from RSS feeds, the open web, and web search, then summarizing through an LLM agent loop. Output is written to a data repo that the user commits manually for cross-device access. Designed to run on a long-lived Linux host.
 
 ## 1. Goals and scope
 
@@ -9,7 +9,7 @@ A personal news agent that produces scheduled, per-topic markdown digests by gat
 - Per-topic markdown digests on configurable cadences (cron expressions).
 - Sources: RSS/Atom feeds, arbitrary web pages, and web search. Sources declared on a topic are **seeds**, not an exhaustive list — the agent is free to discover and use additional sources at its discretion via the available tools.
 - LLM acts as a full agent with tool use, driven by a Scout-owned, provider-agnostic loop (LiteLLM-backed) or one of two external CLI runners (`claude-code`, `codex`).
-- Output written to `output/<slug>/<date>.md`, committed and pushed to the project's GitHub remote.
+- Output written to `output/<slug>/<date>.md`; the user commits and pushes the data repo manually.
 - Inline feedback capture for future use (no auto-incorporation in v1).
 - Triggered by a single cron entry hitting `scout tick` every 15 minutes.
 
@@ -45,15 +45,15 @@ A single cron entry on the host:
 
 1. Acquires file lock `state/<slug>.lock` via `fcntl.flock`. If already held → exit cleanly with status `skipped (locked)`.
 2. Dispatches to the configured runner.
-3. On success: updates state, commits and pushes the output file.
-4. On failure: updates state with error info; no commit.
+3. On success: updates state and writes the output file.
+4. On failure: updates state with error info.
 5. Releases the lock.
 
 `scout run` can also be invoked manually (e.g., for testing a topic outside its cadence — pair with `--force` to bypass the due-check).
 
 ### 2.2 Repo layout
 
-Scout lives in two repositories: a **code repo** (this one) holds the Python project; a **data repo** (separate, located at `$SCOUT_DATA_DIR`) holds the user-edited configs, the live `scout.toml`, the committed digests, and the per-machine state and logs.
+Scout lives in two repositories: a **code repo** (this one) holds the Python project; a **data repo** (separate, located at `$SCOUT_DATA_DIR`) holds the user-edited configs, the live `scout.toml`, the generated digests, and the per-machine state and logs.
 
 Code repo:
 
@@ -85,7 +85,6 @@ scout/
 │   │       └── write_digest.py
 │   ├── config.py               # topic + global config schemas (pydantic)
 │   ├── state.py                # last-run state read/write
-│   ├── git_publish.py          # commit + push inside the data repo
 │   └── feedback.py             # inline-feedback parser & CLI helpers
 ├── prompts/                    # shipped templates (versioned with the code)
 │   ├── headlines.md
@@ -100,10 +99,10 @@ Data repo (located at `$SCOUT_DATA_DIR`, conventionally `~/git/scout-data`):
 
 ```
 scout-data/
-├── scout.toml                  # live config (global defaults, git identity, etc.)
+├── scout.toml                  # live config (global defaults, scheduler, etc.)
 ├── topics/                     # user-edited, one YAML per topic
 │   └── ai-research.yaml
-├── output/                     # committed; <slug>/<YYYY-MM-DD>.md
+├── output/                     # <slug>/<YYYY-MM-DD>.md (user commits manually)
 ├── state/                      # gitignored (per-machine)
 ├── logs/                       # gitignored
 └── .gitignore                  # state/, logs/
@@ -119,7 +118,6 @@ Scout resolves the data repo at runtime in this order: `--data-dir <path>` flag,
 - `runners/claude_code` and `runners/codex` are thin subprocess wrappers; no agent code.
 - `agent/loop` talks only to `agent/llm` and the tool registry; provider-agnostic.
 - Each `agent/tools/*.py` implements exactly one tool with a tested interface.
-- `git_publish` is the only module that touches git.
 - `feedback` reads digest markdown only; never modifies it.
 
 ## 3. Topic config schema
@@ -193,12 +191,6 @@ timeout_seconds = 300
 
 [scheduler]
 max_concurrent_workers = 3
-
-[git]
-author_name  = "Scout"
-author_email = "scout@localhost"
-remote = "origin"
-branch = "main"
 
 [llm]
 # LiteLLM credentials read from env vars by convention;
@@ -340,9 +332,8 @@ There is no content-hash store and no seen-URL set. Deduplication is delegated t
 
 - One worker per topic at a time, enforced by the per-topic file lock.
 - Global concurrency cap from `scout.toml`'s `scheduler.max_concurrent_workers` (default 3); enforced by `scout tick`.
-- Cross-topic git operations are serialized by a repo-level lock (Section 6.2).
 
-## 6. Output format and git workflow
+## 6. Output format
 
 ### 6.1 Digest file format
 
@@ -374,31 +365,15 @@ tokens: unknown
 cost_usd: unknown
 ```
 
-### 6.2 Git publish flow
+Empty-content digests (the agent decided nothing notable happened) are still written — they're useful signal that Scout ran. Failed runs (timeout, no `write_digest` call) produce no digest file.
 
-After `write_digest` succeeds, before the runner returns:
-
-```
-1. Acquire repo-level lock: state/.publish.lock (flock).
-2. git add output/<slug>/<file>.md
-3. git commit -m "digest(<slug>): <YYYY-MM-DD>" \
-       --author "<author_name> <<author_email>>"
-4. git push <remote> <branch>
-   - on failure: git pull --rebase <remote> <branch>; git push <remote> <branch> (one retry)
-   - on still-failure: log the error and accept the local commit;
-     next successful run reconciles.
-5. Release the lock.
-```
-
-One commit per successful run. Empty-content digests (the agent decided nothing notable happened) are still committed — they're useful signal that Scout ran.
-
-Failed runs (timeout, no `write_digest` call) produce no commit and no push.
-
-### 6.3 Same-day collisions
+### 6.2 Same-day collisions
 
 `write_digest` writes `output/<slug>/<YYYY-MM-DD>.md`. If that file already exists (topic configured for multiple runs per day, or a `--force` manual rerun), the runner instead writes `output/<slug>/<YYYY-MM-DD>-<HHMMSS>.md` (UTC). No overwrites, ever.
 
-### 6.4 Committed vs gitignored
+### 6.3 Committed vs gitignored
+
+The user commits these; Scout itself never runs git.
 
 | Committed | Gitignored |
 |-----------|------------|
@@ -409,10 +384,6 @@ Failed runs (timeout, no `write_digest` call) produce no commit and no push.
 | `output/**/*.md` | |
 | `spec.md`, `AGENTS.md` | |
 
-### 6.5 Auth
-
-Push authentication is whatever the host already provides (SSH key, or an HTTPS credential helper / PAT in the remote URL). Scout does not manage push credentials; it just invokes `git push`. Credential setup is a deployment concern.
-
 ## 7. Error handling and observability
 
 ### 7.1 Failure modes
@@ -422,9 +393,8 @@ Push authentication is whatever the host already provides (SSH key, or an HTTPS 
 | Tool call errors (network, parse, 4xx, 404) | inside agent loop | Return `{"error": "..."}` to the model. Recoverable. |
 | LiteLLM rate-limit / transient error | LLM call | Exponential backoff: up to 3 attempts, base delay 2s. |
 | LiteLLM auth / model-not-found / non-transient 4xx | LLM call | No retry. Fail the run. |
-| Wall-clock timeout | loop | Abort. `last_status="failed"`, `last_error="timeout after Xs"`. No commit. |
-| Loop ends without `write_digest` | loop | Fail. `last_error="no digest produced"`. No commit. |
-| `git push` failure | publish | One `pull --rebase` retry, then accept local commit; next run reconciles. |
+| Wall-clock timeout | loop | Abort. `last_status="failed"`, `last_error="timeout after Xs"`. |
+| Loop ends without `write_digest` | loop | Fail. `last_error="no digest produced"`. |
 | State file missing or corrupted | tick startup | Log warning; treat as no prior run; topic is due. |
 | Lock contention | run startup | Exit `skipped (locked)`. Not a failure. State is **not** updated. |
 | Topic config invalid | tick startup | Log error; skip that topic; continue with the rest. `scout validate` catches these proactively. |
@@ -466,7 +436,6 @@ The builtin runner logs LLM turns, tool calls, tokens, and cost in full. The `cl
 - `config.py` — valid configs load, invalid configs raise with clear messages, slug derived from filename, every documented field has at least one positive and one negative case.
 - `scheduler.py` — croniter-based is-due logic with a frozen clock. Edge cases: first run, just-missed slot, multiple topics due simultaneously.
 - `state.py` — read/write/missing/corrupted; atomicity (temp + rename).
-- `git_publish.py` — against a temp git repo with a temp bare `origin`. Happy path, push-fail-then-rebase, repo lock contention.
 - `feedback.py` — parse well-formed blocks, ignore malformed blocks with a warning.
 - Tool input-schema validation — each tool's JSON-Schema matches its handler signature (introspection test).
 - Frontmatter assembly — given a fixed run record, produces stable bytes.
@@ -480,7 +449,7 @@ The builtin runner logs LLM turns, tool calls, tokens, and cost in full. The `cl
 
 ### 8.3 Tier 3 — Smoke (manual)
 
-- `scout run --topic X --dry-run` — exercises the real LLM and real tools end-to-end but **skips git commit/push**. Output lands in `output/` for inspection. Used to validate a topic config before enabling its cron.
+- `scout run --topic X` — exercises the real LLM and real tools end-to-end. Output lands in `output/` for inspection. Used to validate a topic config before enabling its cron.
 
 ### 8.4 Non-goals
 
@@ -496,7 +465,6 @@ tests/
 │   ├── test_config.py
 │   ├── test_scheduler.py
 │   ├── test_state.py
-│   ├── test_git_publish.py
 │   ├── test_feedback.py
 │   └── test_tool_schemas.py
 ├── integration/
@@ -571,7 +539,7 @@ Scout never modifies an existing digest, so user edits are safe.
 | Command | Purpose |
 |---|---|
 | `scout tick` | Orchestrator; run from cron every 15 min. |
-| `scout run --topic X [--force] [--dry-run]` | Run one topic now. `--force` bypasses the due check; `--dry-run` skips commit/push. |
+| `scout run --topic X [--force]` | Run one topic now. `--force` bypasses the due check. |
 | `scout topics` | Status table across all topics. |
 | `scout validate` | Schema-check every topic config; nonzero exit on any failure. |
 | `scout doctor` | Health summary over the last 7 days. |
@@ -597,5 +565,5 @@ Secrets (LiteLLM provider keys, Brave Search API key) are read from environment 
 - Target: any Linux host with `git`, `uv`, and outbound network. The `claude-code` runner additionally requires the Claude Code CLI installed and authenticated; the `codex` runner requires the Codex CLI similarly.
 - Install: `git clone`, `uv sync`, then `uv run playwright install chromium` if any topic uses `browser_use`.
 - Cron: one line, `*/15 * * * * cd /path/to/scout && uv run scout tick >> logs/tick.log 2>&1`.
-- Git push credentials: SSH key or HTTPS PAT, set up out-of-band.
+- Committing/pushing the data repo is a manual user step; Scout never touches git.
 - Provider API keys: in `.env` (gitignored).

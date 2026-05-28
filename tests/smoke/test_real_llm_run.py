@@ -1,9 +1,6 @@
 import json
-import os
-import subprocess
 import textwrap
 from datetime import datetime, timezone
-from pathlib import Path
 
 import pytest
 
@@ -11,25 +8,9 @@ from scout.state import read_state
 from tests.smoke.conftest import requires_google_key
 
 
-def _init_git(d: Path):
-    subprocess.run(["git", "init", "-b", "main", str(d)], check=True)
-    env = {
-        **os.environ,
-        "GIT_AUTHOR_NAME": "t",
-        "GIT_AUTHOR_EMAIL": "t@t",
-        "GIT_COMMITTER_NAME": "t",
-        "GIT_COMMITTER_EMAIL": "t@t",
-    }
-    subprocess.run(
-        ["git", "-C", str(d), "commit", "--allow-empty", "-m", "init"], check=True, env=env
-    )
-
-
 @pytest.mark.smoke
 @requires_google_key
-def test_scout_run_dry_run_against_gemini(tmp_path, monkeypatch):
-    _init_git(tmp_path)
-
+def test_scout_run_against_gemini(tmp_path, monkeypatch):
     # minimal scout.toml so the worker resolves defaults
     (tmp_path / "scout.toml").write_text(
         textwrap.dedent("""
@@ -37,12 +18,6 @@ def test_scout_run_dry_run_against_gemini(tmp_path, monkeypatch):
         runner = "builtin"
         model = "gemini/gemini-2.5-flash"
         timeout_seconds = 60
-
-        [git]
-        author_name = "Scout"
-        author_email = "scout@localhost"
-        remote = "origin"
-        branch = "main"
     """)
     )
     (tmp_path / "topics").mkdir()
@@ -65,7 +40,7 @@ def test_scout_run_dry_run_against_gemini(tmp_path, monkeypatch):
 
     from scout.cli import main
 
-    rc = main(["run", "--topic", "smoke", "--dry-run", "--force"])
+    rc = main(["run", "--topic", "smoke", "--force"])
     assert rc == 0, f"scout run failed with rc={rc}"
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -78,10 +53,6 @@ def test_scout_run_dry_run_against_gemini(tmp_path, monkeypatch):
 
     st = read_state("smoke", tmp_path / "state")
     assert st is not None and st.last_status == "ok"
-
-    # dry-run did NOT commit
-    log = subprocess.check_output(["git", "-C", str(tmp_path), "log", "--oneline"]).decode()
-    assert log.count("\n") == 1, f"expected only init commit, got: {log!r}"
 
     jsonl_files = list((tmp_path / "logs" / "smoke").glob("*.jsonl"))
     assert len(jsonl_files) == 1

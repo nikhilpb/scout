@@ -79,7 +79,6 @@ def main(argv: list[str] | None = None) -> int:
     run_p = sub.add_parser("run", help="run a single topic now")
     run_p.add_argument("--topic", required=True)
     run_p.add_argument("--force", action="store_true")
-    run_p.add_argument("--dry-run", action="store_true")
 
     sub.add_parser("tick", help="orchestrator (run from cron)")
     sub.add_parser("doctor", help="health summary across last 7 days")
@@ -113,7 +112,7 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_topics(args, data)
     if args.command == "run":
         from scout.worker import run_topic
-        return run_topic(args.topic, data=data, force=args.force, dry_run=args.dry_run)
+        return run_topic(args.topic, data=data, force=args.force)
     if args.command == "tick":
         from scout.orchestrator import tick
         return tick(data)

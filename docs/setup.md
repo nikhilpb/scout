@@ -52,4 +52,4 @@ If neither is set, scout exits with `scout: no data directory configured: set $S
 
 ## Editing topics
 
-Topic YAMLs live in `$SCOUT_DATA_DIR/topics/`. Edit, commit, and push them from the data repo as you would any other file. Scout itself only commits and pushes files under `$SCOUT_DATA_DIR/output/`.
+Topic YAMLs live in `$SCOUT_DATA_DIR/topics/`. Edit, commit, and push them from the data repo as you would any other file. Scout only writes the digests it generates under `$SCOUT_DATA_DIR/output/`; commit and push those yourself along with your topic changes.
