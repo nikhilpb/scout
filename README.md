@@ -810,7 +810,8 @@ Code repo:
 ```text
 scout/
 |-- pyproject.toml
-|-- spec.md
+|-- docs/
+|   `-- spec-initial-implementation.md
 |-- prompts/
 |   |-- briefing.md
 |   |-- headlines.md
