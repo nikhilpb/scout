@@ -66,4 +66,4 @@ directory. The output directory is created on demand if it does not exist.
 
 ## Editing topics
 
-Topic YAMLs live in `$SCOUT_DATA_DIR/topics/`. Edit, commit, and push them from the data repo as you would any other file. Scout only writes the digests it generates under `$SCOUT_DATA_DIR/output/`; commit and push those yourself along with your topic changes.
+Topic YAMLs live in `$SCOUT_DATA_DIR/topics/`. Edit, commit, and push them from the data repo as you would any other file. Scout only writes the digests it generates under the output directory (`$SCOUT_DATA_DIR/output/` by default, or wherever `$SCOUT_OUTPUT_DIR` / `--output-dir` points); commit and push those yourself along with your topic changes.

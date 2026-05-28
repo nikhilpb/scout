@@ -101,26 +101,26 @@ In this checkout, the practical layout is:
 `-- scout-data/
 ```
 
-When running Scout from source, keep the current working directory set to the
-data repo and point `uv` at the code repo:
+When running Scout from source, point `uv` at the code repo and tell Scout
+where the data repo is via `$SCOUT_DATA_DIR` or `--data-dir`:
 
 ```bash
-cd ../scout-data
-uv --project ../scout run scout topics
+uv --project ../scout run scout --data-dir ../scout-data topics
 ```
 
-That detail matters because Scout resolves `topics/`, `scout.toml`, `output/`,
-`state/`, and `logs/` relative to the process working directory in the current
-implementation.
+Scout resolves `topics/`, `scout.toml`, `state/`, and `logs/` under the data
+directory, and digests under the output directory (`$SCOUT_OUTPUT_DIR` /
+`--output-dir`, defaulting to `<data-dir>/output`). None of these depend on the
+current working directory — that only affects where `uv` finds the project,
+which `--project` makes explicit.
 
 ## How It Works
 
-The normal production entrypoint is run with the data repo as the working
-directory:
+The normal production entrypoint points `uv` at the code repo and supplies the
+data repo via env (or `--data-dir`):
 
 ```bash
-cd /path/to/scout-data
-uv --project /path/to/scout run scout tick
+SCOUT_DATA_DIR=/path/to/scout-data uv --project /path/to/scout run scout tick
 ```
 
 `scout tick`:
@@ -216,11 +216,16 @@ git add .gitignore scout.toml
 git commit -m "scout-data: initial layout"
 ```
 
-Check the CLI while using the data repo as the working directory:
+Point Scout at the data repo (add this to your shell rc to persist it):
 
 ```bash
-cd /path/to/scout-data
-uv --project ../scout run scout --help
+export SCOUT_DATA_DIR=/path/to/scout-data
+```
+
+Check the CLI, pointing `uv` at the code repo:
+
+```bash
+uv --project /path/to/scout run scout --help
 ```
 
 Create your first topic in the data repo:
@@ -264,7 +269,7 @@ uv --project ../scout run scout run --topic ai-research --force
 Inspect the result:
 
 ```bash
-ls output/ai-research/
+ls "$SCOUT_DATA_DIR/output/ai-research/"
 ```
 
 Check topic status:
@@ -522,11 +527,12 @@ crashing the whole process.
 
 ## CLI Reference
 
-The examples below assume your shell is in the data repo and the code repo is
-available at `../scout`:
+The examples below point `uv` at the code repo at `../scout` and assume the
+data repo is set via `$SCOUT_DATA_DIR` (otherwise add `--data-dir` to each
+command):
 
 ```bash
-cd /path/to/scout-data
+export SCOUT_DATA_DIR=/path/to/scout-data
 ```
 
 ### Global flags
@@ -754,20 +760,22 @@ script that exports keys or sources a local `.env`, then runs Scout.
 Example crontab entry:
 
 ```cron
-*/15 * * * * cd /path/to/scout-data && ./run-scout-tick.sh
+*/15 * * * * /path/to/scout-data/run-scout-tick.sh
 ```
 
-Where `run-scout-tick.sh` is a small data-repo-local wrapper like:
+Where `run-scout-tick.sh` is a small wrapper that points Scout at the data repo
+via env:
 
 ```bash
 #!/bin/sh
-uv --project /path/to/scout run scout tick >> logs/tick.log 2>&1
+export SCOUT_DATA_DIR=/path/to/scout-data
+uv --project /path/to/scout run scout tick >> "$SCOUT_DATA_DIR/logs/tick.log" 2>&1
 ```
 
 Use `scout topics` and `scout doctor` to verify the schedule is healthy:
 
 ```bash
-cd /path/to/scout-data
+export SCOUT_DATA_DIR=/path/to/scout-data
 uv --project /path/to/scout run scout topics
 uv --project /path/to/scout run scout doctor
 ```
@@ -877,8 +885,8 @@ Set `BRAVE_SEARCH_API_KEY` in the environment used to run Scout.
 To run it once for inspection:
 
 ```bash
-cd /path/to/scout-data
-BRAVE_SEARCH_API_KEY=... uv --project /path/to/scout run scout run \
+SCOUT_DATA_DIR=/path/to/scout-data BRAVE_SEARCH_API_KEY=... \
+  uv --project /path/to/scout run scout run \
   --topic ai-research \
   --force
 ```
