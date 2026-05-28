@@ -20,8 +20,12 @@ class DataPaths:
     config_path: Path
 
     @classmethod
-    def resolve(cls, cli_arg: Optional[str]) -> "DataPaths":
-        raw = cli_arg if cli_arg else os.environ.get("SCOUT_DATA_DIR")
+    def resolve(
+        cls,
+        data_dir_arg: Optional[str],
+        output_dir_arg: Optional[str] = None,
+    ) -> "DataPaths":
+        raw = data_dir_arg if data_dir_arg else os.environ.get("SCOUT_DATA_DIR")
         if not raw:
             raise DataPathsError(
                 "no data directory configured: "
@@ -36,8 +40,18 @@ class DataPaths:
         return cls(
             root=root,
             topics_dir=root / "topics",
-            output_dir=root / "output",
+            output_dir=cls._resolve_output_dir(root, output_dir_arg),
             state_dir=root / "state",
             logs_dir=root / "logs",
             config_path=root / "scout.toml",
         )
+
+    @staticmethod
+    def _resolve_output_dir(root: Path, output_dir_arg: Optional[str]) -> Path:
+        raw = output_dir_arg if output_dir_arg else os.environ.get("SCOUT_OUTPUT_DIR")
+        if not raw:
+            return root / "output"
+        out = Path(raw).expanduser().resolve()
+        if out.exists() and not out.is_dir():
+            raise DataPathsError(f"output path is not a directory: {out}")
+        return out

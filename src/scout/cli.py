@@ -71,6 +71,15 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="path to the scout data repo (default: $SCOUT_DATA_DIR)",
     )
+    parser.add_argument(
+        "--output-dir",
+        dest="output_dir",
+        default=None,
+        help=(
+            "directory for digest output "
+            "(default: $SCOUT_OUTPUT_DIR, else <data-dir>/output)"
+        ),
+    )
     sub = parser.add_subparsers(dest="command")
 
     sub.add_parser("validate", help="schema-check all topic configs")
@@ -101,7 +110,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     try:
-        data = DataPaths.resolve(args.data_dir)
+        data = DataPaths.resolve(args.data_dir, args.output_dir)
     except DataPathsError as e:
         print(f"scout: {e}", file=sys.stderr)
         return 2

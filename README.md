@@ -87,8 +87,11 @@ scout-data/
 `-- logs/
 ```
 
-Scout writes digests to the data repo's `output/` directory. Its `state/` and
-`logs/` directories hold local runtime artifacts.
+Scout writes digests to the data repo's `output/` directory by default. You can
+redirect them elsewhere — including outside the data repo — by setting
+`$SCOUT_OUTPUT_DIR` or passing `--output-dir` (the flag takes precedence). The
+`state/` and `logs/` directories hold local runtime artifacts and always stay
+under the data repo.
 
 In this checkout, the practical layout is:
 
@@ -526,6 +529,14 @@ available at `../scout`:
 cd /path/to/scout-data
 ```
 
+### Global flags
+
+These apply to every subcommand and go before the subcommand name:
+
+- `--data-dir` — path to the data repo (default: `$SCOUT_DATA_DIR`).
+- `--output-dir` — directory for digest output (default: `$SCOUT_OUTPUT_DIR`,
+  else `<data-dir>/output`). May point outside the data repo; created on demand.
+
 ### `scout validate`
 
 Schema-check every `topics/*.yaml` file in the data repo.
@@ -626,10 +637,11 @@ uv --project ../scout run scout feedback list --topic ai-research
 
 ### Output
 
-Digests are written in the data repo under:
+Digests are written under the output directory (by default `<data-dir>/output`,
+or wherever `$SCOUT_OUTPUT_DIR` / `--output-dir` points):
 
 ```text
-output/<slug>/<YYYY-MM-DD>.md
+<output-dir>/<slug>/<YYYY-MM-DD>.md
 ```
 
 The built-in runner avoids same-day filename collisions by adding a UTC time

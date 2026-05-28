@@ -44,6 +44,7 @@ def _spawn_run(slug: str, data: DataPaths) -> int:
     cmd = [
         sys.executable, "-m", "scout",
         "--data-dir", str(data.root),
+        "--output-dir", str(data.output_dir),
         "run", "--topic", slug,
     ]
     proc = subprocess.run(cmd)

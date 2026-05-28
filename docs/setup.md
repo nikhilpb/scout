@@ -42,6 +42,20 @@ scout --data-dir /tmp/scratch tick   # override for ad-hoc runs
 
 If neither is set, scout exits with `scout: no data directory configured: set $SCOUT_DATA_DIR or pass --data-dir`.
 
+### Output directory
+
+By default digests are written under `<data-dir>/output/`. To write them
+elsewhere, set `$SCOUT_OUTPUT_DIR` or pass `--output-dir`; the flag wins over the
+env var, and the path may live outside the data repo:
+
+```sh
+scout --output-dir ~/scout-digests tick      # custom output location
+SCOUT_OUTPUT_DIR=~/scout-digests scout tick   # same, via env
+```
+
+`topics/`, `state/`, `logs/`, and `scout.toml` always stay under the data
+directory. The output directory is created on demand if it does not exist.
+
 ## Cron
 
 ```

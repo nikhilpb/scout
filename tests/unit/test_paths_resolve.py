@@ -75,3 +75,71 @@ def test_resolve_expands_user(tmp_path, monkeypatch):
     monkeypatch.delenv("SCOUT_DATA_DIR", raising=False)
     dp = DataPaths.resolve("~/scout-data")
     assert dp.root == target.resolve()
+
+
+def test_output_dir_defaults_to_root_output(tmp_path, monkeypatch):
+    monkeypatch.setenv("SCOUT_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("SCOUT_OUTPUT_DIR", raising=False)
+    dp = DataPaths.resolve(None)
+    assert dp.output_dir == tmp_path.resolve() / "output"
+
+
+def test_output_flag_overrides_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("SCOUT_DATA_DIR", str(tmp_path))
+    env_out = tmp_path / "env-out"
+    env_out.mkdir()
+    flag_out = tmp_path / "flag-out"
+    flag_out.mkdir()
+    monkeypatch.setenv("SCOUT_OUTPUT_DIR", str(env_out))
+    dp = DataPaths.resolve(None, str(flag_out))
+    assert dp.output_dir == flag_out.resolve()
+
+
+def test_output_env_used_when_no_flag(tmp_path, monkeypatch):
+    monkeypatch.setenv("SCOUT_DATA_DIR", str(tmp_path))
+    env_out = tmp_path / "env-out"
+    env_out.mkdir()
+    monkeypatch.setenv("SCOUT_OUTPUT_DIR", str(env_out))
+    dp = DataPaths.resolve(None)
+    assert dp.output_dir == env_out.resolve()
+
+
+def test_output_dir_may_live_outside_data_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("SCOUT_DATA_DIR", str(tmp_path / "data"))
+    (tmp_path / "data").mkdir()
+    elsewhere = tmp_path / "elsewhere" / "out"
+    elsewhere.mkdir(parents=True)
+    dp = DataPaths.resolve(None, str(elsewhere))
+    assert dp.output_dir == elsewhere.resolve()
+
+
+def test_output_dir_need_not_preexist(tmp_path, monkeypatch):
+    monkeypatch.setenv("SCOUT_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("SCOUT_OUTPUT_DIR", raising=False)
+    missing = tmp_path / "not-yet"
+    dp = DataPaths.resolve(None, str(missing))
+    assert dp.output_dir == missing.resolve()
+
+
+def test_output_dir_expands_user(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("SCOUT_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("SCOUT_OUTPUT_DIR", raising=False)
+    dp = DataPaths.resolve(None, "~/my-output")
+    assert dp.output_dir == (tmp_path / "my-output").resolve()
+
+
+def test_empty_string_output_flag_treated_as_unset(tmp_path, monkeypatch):
+    monkeypatch.setenv("SCOUT_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("SCOUT_OUTPUT_DIR", raising=False)
+    dp = DataPaths.resolve(None, "")
+    assert dp.output_dir == tmp_path.resolve() / "output"
+
+
+def test_error_when_output_path_is_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("SCOUT_DATA_DIR", str(tmp_path))
+    f = tmp_path / "outfile"
+    f.write_text("x")
+    with pytest.raises(DataPathsError) as exc:
+        DataPaths.resolve(None, str(f))
+    assert "not a directory" in str(exc.value)
