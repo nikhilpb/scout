@@ -89,9 +89,9 @@ class ClaudeCodeRunner:
                 "subprocess_output", returncode=None, timed_out=True,
                 stderr=stderr[-2000:], stdout_tail=partial[-1000:],
             )
-            for name, count in metrics["tool_calls"].items():
-                for _ in range(count):
-                    run_log.event("tool_call", tool=name)
+            # Salvage cost/tokens too, not just tool calls — a CLI that streamed a
+            # full result event before hanging still has real usage to record.
+            self._replay_metrics(run_log, metrics)
             return self._fail(run_log, "timeout", duration, summary=run_log.summary())
         duration = time.monotonic() - start
 
@@ -104,42 +104,36 @@ class ClaudeCodeRunner:
         )
         # Replay parsed activity into the run log so RunLog.summary() aggregates
         # tool calls, tokens, and cost exactly as it does for the builtin runner.
-        for name, count in metrics["tool_calls"].items():
-            for _ in range(count):
-                run_log.event("tool_call", tool=name)
-        if metrics["result"] is not None:
-            run_log.event(
-                "llm_turn",
-                input_tokens=metrics["tokens"]["input"],
-                output_tokens=metrics["tokens"]["output"],
-                cost_usd=metrics["cost_usd"],
-                num_turns=metrics["num_turns"],
-            )
-        if metrics["permission_denials"]:
-            run_log.event("permission_denials", denials=metrics["permission_denials"])
+        self._replay_metrics(run_log, metrics)
 
-        resolved_model = metrics["model"] or model or UNKNOWN
         summary = run_log.summary()
 
-        if proc.returncode != 0 or metrics["is_error"]:
-            reason = metrics["error_subtype"] or f"exit_{proc.returncode}"
+        # Prefer the CLI's own success signal (the result event) over the raw exit
+        # code: a benign non-zero exit after a run that the CLI itself reported as
+        # successful should not throw away a digest it already wrote. Only fall back
+        # to the exit code when there is no result event to trust.
+        if metrics["is_error"]:
+            reason = metrics["error_subtype"] or "cli_error"
             return self._fail(run_log, reason, duration, summary=summary)
+        if metrics["result"] is None and proc.returncode != 0:
+            return self._fail(run_log, f"exit_{proc.returncode}", duration, summary=summary)
 
         out_path = paths.output_dir / topic.slug / f"{now.strftime('%Y-%m-%d')}.md"
         if not out_path.exists():
             return self._fail(run_log, "no_digest", duration, summary=summary)
 
         body = out_path.read_text()
+        resolved_model = metrics["model"] or model or UNKNOWN
         if metrics["result"] is not None:
             tool_calls: dict | str = summary["tool_calls"]
             tokens: dict | str = summary["tokens"]
             cost_usd: float | str = round(summary["cost_usd"], 4)
         else:
-            # The CLI produced a digest but no parseable metrics (e.g. a stubbed
-            # CLI). Record what we know and leave the rest as `unknown`.
-            tool_calls = summary["tool_calls"] or UNKNOWN
-            tokens = UNKNOWN
-            cost_usd = UNKNOWN
+            # The CLI wrote a digest but emitted no parseable result (e.g. a stubbed
+            # CLI, or a crash before the final event). We have no reliable view of
+            # the run, so report every metric uniformly as `unknown` rather than
+            # implying "zero tools / zero cost".
+            tool_calls = tokens = cost_usd = UNKNOWN
         rec = DigestRecord(
             topic=topic.slug,
             date=now.strftime("%Y-%m-%d"),
@@ -153,6 +147,28 @@ class ClaudeCodeRunner:
         out_path.write_text(compose_digest(rec, body))
         run_log.event("run_end", status="ok", duration_seconds=duration, **summary)
         return RunResult("ok", None, out_path, duration, summary)
+
+    def _replay_metrics(self, run_log: RunLog, metrics: dict) -> None:
+        """Feed parsed stream activity into the run log.
+
+        Re-emits one ``tool_call`` event per observed call and a single
+        ``llm_turn`` carrying the aggregate tokens/cost, so ``RunLog.summary()``
+        aggregates claude-code runs the same way it does builtin ones. Used by
+        both the success path and the timeout-salvage path.
+        """
+        for name, count in metrics["tool_calls"].items():
+            for _ in range(count):
+                run_log.event("tool_call", tool=name)
+        if metrics["result"] is not None:
+            run_log.event(
+                "llm_turn",
+                input_tokens=metrics["tokens"]["input"],
+                output_tokens=metrics["tokens"]["output"],
+                cost_usd=metrics["cost_usd"],
+                num_turns=metrics["num_turns"],
+            )
+        if metrics["permission_denials"]:
+            run_log.event("permission_denials", denials=metrics["permission_denials"])
 
     def _fail(
         self,
@@ -178,6 +194,25 @@ class ClaudeCodeRunner:
         if isinstance(value, bytes):
             return value.decode("utf-8", "replace")
         return value
+
+    @staticmethod
+    def _int(value) -> int:
+        """Coerce a stream field to int, treating null/missing/garbage as 0.
+
+        ``dict.get(key, 0)`` only returns the default when the key is absent — a
+        present-but-``null`` JSON field returns ``None``, and ``int(None)`` raises.
+        """
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
+    def _num(value) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
 
     def _parse_stream(self, stdout: str) -> dict:
         """Parse Claude Code ``stream-json`` output into a metrics dict.
@@ -225,7 +260,7 @@ class ClaudeCodeRunner:
         permission_denials: list = []
 
         if result is not None:
-            cost_usd = float(result.get("total_cost_usd") or 0.0)
+            cost_usd = self._num(result.get("total_cost_usd"))
             num_turns = result.get("num_turns")
             is_error = bool(result.get("is_error"))
             subtype = result.get("subtype")
@@ -233,27 +268,32 @@ class ClaudeCodeRunner:
                 error_subtype = subtype
             permission_denials = result.get("permission_denials") or []
             model_usage = result.get("modelUsage") or {}
+            # Keep only well-formed per-model entries; a null/scalar value would
+            # break both the token sum and the max(...) model pick below.
+            model_usage = {
+                k: v for k, v in model_usage.items() if isinstance(v, dict)
+            }
             if model_usage:
                 for usage in model_usage.values():
                     tokens["input"] += (
-                        int(usage.get("inputTokens", 0))
-                        + int(usage.get("cacheReadInputTokens", 0))
-                        + int(usage.get("cacheCreationInputTokens", 0))
+                        self._int(usage.get("inputTokens"))
+                        + self._int(usage.get("cacheReadInputTokens"))
+                        + self._int(usage.get("cacheCreationInputTokens"))
                     )
-                    tokens["output"] += int(usage.get("outputTokens", 0))
+                    tokens["output"] += self._int(usage.get("outputTokens"))
                 if model is None:
                     model = max(
                         model_usage.items(),
-                        key=lambda kv: kv[1].get("costUSD", 0),
+                        key=lambda kv: self._num(kv[1].get("costUSD")),
                     )[0]
             else:
                 usage = result.get("usage") or {}
                 tokens["input"] = (
-                    int(usage.get("input_tokens", 0))
-                    + int(usage.get("cache_creation_input_tokens", 0))
-                    + int(usage.get("cache_read_input_tokens", 0))
+                    self._int(usage.get("input_tokens"))
+                    + self._int(usage.get("cache_creation_input_tokens"))
+                    + self._int(usage.get("cache_read_input_tokens"))
                 )
-                tokens["output"] = int(usage.get("output_tokens", 0))
+                tokens["output"] = self._int(usage.get("output_tokens"))
 
         return {
             "tool_calls": tool_calls,

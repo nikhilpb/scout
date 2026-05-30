@@ -75,3 +75,42 @@ def test_parse_stream_empty():
     assert m["tool_calls"] == {}
     assert m["model"] is None
     assert m["cost_usd"] == 0.0
+
+
+def test_parse_stream_null_token_fields_do_not_crash():
+    # A present-but-null token field must coerce to 0, not raise (int(None)).
+    stdout = _stream(
+        {"type": "system", "subtype": "init", "model": "claude-sonnet-4-6"},
+        {"type": "result", "subtype": "success", "total_cost_usd": 0.5,
+         "modelUsage": {"claude-sonnet-4-6": {
+             "inputTokens": 100, "outputTokens": None,
+             "cacheReadInputTokens": None, "cacheCreationInputTokens": 10,
+             "costUSD": 0.5}}},
+    )
+    m = ClaudeCodeRunner()._parse_stream(stdout)
+    assert m["tokens"] == {"input": 110, "output": 0}
+    assert m["cost_usd"] == 0.5
+
+
+def test_parse_stream_non_numeric_cost_does_not_crash():
+    stdout = _stream(
+        {"type": "result", "subtype": "success", "total_cost_usd": "N/A",
+         "modelUsage": {}},
+    )
+    m = ClaudeCodeRunner()._parse_stream(stdout)
+    assert m["cost_usd"] == 0.0
+
+
+def test_parse_stream_skips_non_dict_model_usage_entry():
+    # A null/scalar modelUsage value must not break token summing or model pick.
+    stdout = _stream(
+        {"type": "result", "subtype": "success", "total_cost_usd": 0.3,
+         "modelUsage": {
+             "claude-broken": None,
+             "claude-sonnet-4-6": {"inputTokens": 50, "outputTokens": 5,
+                                   "costUSD": 0.3}}},
+    )
+    m = ClaudeCodeRunner()._parse_stream(stdout)
+    assert m["tokens"] == {"input": 50, "output": 5}
+    # init had no model => picked from the well-formed entry, not the null one
+    assert m["model"] == "claude-sonnet-4-6"

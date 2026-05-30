@@ -141,7 +141,9 @@ def test_claude_code_runner_timeout_salvages_partial(tmp_path, monkeypatch):
     logs_dir = tmp_path / "logs"
     now = datetime(2026, 5, 20, 7, tzinfo=timezone.utc)
     # Fake CLI (Python so it can flush like the real streaming CLI): emit two
-    # tool_use events, flush them to the pipe, then hang past the runner's timeout.
+    # tool_use events AND a full result event, flush them to the pipe, then hang
+    # past the runner's timeout (models a CLI that finished the work but didn't
+    # exit before we killed it).
     bindir.mkdir(parents=True)
     script = bindir / "claude"
     partial = "".join(
@@ -150,6 +152,10 @@ def test_claude_code_runner_timeout_salvages_partial(tmp_path, monkeypatch):
                 {"type": "tool_use", "id": "x1", "name": "WebSearch", "input": {}}]}},
             {"type": "assistant", "message": {"content": [
                 {"type": "tool_use", "id": "x2", "name": "WebFetch", "input": {}}]}},
+            {"type": "result", "subtype": "success", "is_error": False,
+             "num_turns": 2, "total_cost_usd": 0.42,
+             "modelUsage": {"claude-sonnet-4-6": {
+                 "inputTokens": 10, "outputTokens": 5, "costUSD": 0.42}}},
         ]
     )
     script.write_text(
@@ -184,3 +190,58 @@ def test_claude_code_runner_timeout_salvages_partial(tmp_path, monkeypatch):
     assert '"timed_out": true' in log_text
     assert '"tool": "WebSearch"' in log_text
     assert '"tool": "WebFetch"' in log_text
+    # cost/tokens from the salvaged result event are recorded too, not dropped
+    assert result.summary["cost_usd"] == 0.42
+    assert '"cost_usd": 0.42' in log_text
+
+
+@pytest.mark.integration
+def test_claude_code_runner_keeps_digest_on_benign_nonzero_exit(tmp_path, monkeypatch):
+    # CLI writes the digest and reports success in the result event, but the
+    # process exits non-zero (e.g. a benign post-run warning). The digest must
+    # be kept, not discarded.
+    bindir = tmp_path / "bin"
+    out_dir = tmp_path / "output"
+    logs_dir = tmp_path / "logs"
+    now = datetime(2026, 5, 20, 7, tzinfo=timezone.utc)
+    stream_lines = [
+        json.dumps({"type": "system", "subtype": "init", "model": "claude-sonnet-4-6"}),
+        json.dumps({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "w", "name": "Write", "input": {}}]}}),
+        json.dumps({"type": "result", "subtype": "success", "is_error": False,
+                    "num_turns": 1, "total_cost_usd": 0.05,
+                    "modelUsage": {"claude-sonnet-4-6": {
+                        "inputTokens": 10, "outputTokens": 5, "costUSD": 0.05}}}),
+    ]
+    bindir.mkdir(parents=True)
+    script = bindir / "claude"
+    lines = [
+        "#!/bin/sh",
+        'mkdir -p "$(dirname ai/2026-05-20.md)"',
+        "printf %s '# body' > ai/2026-05-20.md",
+    ]
+    lines += [f"printf '%s\\n' {line!r}" for line in stream_lines]
+    lines += ["exit 3"]  # non-zero exit after a successful, digest-writing run
+    script.write_text("\n".join(lines) + "\n")
+    script.chmod(script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    monkeypatch.setenv("PATH", f"{bindir}:{os.environ['PATH']}")
+    topic = LoadedTopic(
+        slug="ai", path=Path("topics/ai.yaml"),
+        config=TopicConfig(
+            title="AI", description="AI research.",
+            cadence="0 7 * * *", runner="claude-code", model="claude-sonnet-4-6",
+            prompt={"template": "briefing"},
+        ),
+    )
+    runner = make_runner("claude-code")
+    with RunLog("ai", logs_dir, now=now) as rl:
+        result = runner.execute(
+            topic,
+            Paths(output_dir=out_dir, logs_dir=logs_dir),
+            Limits(timeout_seconds=10),
+            run_log=rl, now=now,
+        )
+    assert result.status == "ok"
+    content = (out_dir / "ai" / "2026-05-20.md").read_text()
+    assert "# body" in content
+    assert "cost_usd: 0.05" in content
