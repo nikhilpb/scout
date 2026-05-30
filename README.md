@@ -457,11 +457,24 @@ Requires:
 
 ### `claude-code`
 
-Runs the external Claude Code CLI as a subprocess. Scout asks the CLI to write
-the digest into the topic output directory, then Scout adds frontmatter.
+Runs the external Claude Code CLI (`claude -p`) as a subprocess. Scout asks the
+CLI to write the digest into the topic output directory, then Scout adds
+frontmatter.
 
 Use it when you want Claude Code's own tool behavior instead of Scout's
 built-in loop.
+
+The CLI is invoked with `--output-format stream-json`, and Scout parses that
+stream, so the run is not opaque:
+
+- The agent is restricted to a fixed tool set — `WebSearch`, `WebFetch`, `Read`,
+  `Glob`, and `Write` — via `--tools` (so it cannot reach `Bash`, `Task`, or the
+  multi-agent `Workflow` tool) plus `--allowedTools` (so those tools run without
+  a permission prompt). The host's MCP servers are ignored (`--strict-mcp-config`).
+- If the topic sets `model`, it is passed to `claude --model`; otherwise the
+  CLI's default model is used.
+- The agent reviews prior digests in the topic's output folder (`Glob` + `Read`)
+  to avoid repeating items.
 
 Requires:
 
@@ -470,8 +483,12 @@ Requires:
 
 Telemetry:
 
-- `model`, `tool_calls`, `tokens`, and `cost_usd` are recorded as `unknown`
-  because Scout cannot inspect them from the CLI.
+- `model`, `tool_calls`, `tokens`, and `cost_usd` are parsed from the CLI's
+  `stream-json` result and recorded in the run log and digest frontmatter, just
+  like the `builtin` runner. They fall back to `unknown` only if the CLI emits
+  no parseable result (e.g. a crash before the final event).
+- On timeout, Scout still records the partial tool activity and output streamed
+  before the run was killed.
 
 ### `codex`
 
