@@ -174,10 +174,20 @@ Scout reads credentials from environment variables at runtime. For example,
 depending on your configured model, LiteLLM may need variables such as
 `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `GEMINI_API_KEY`.
 
-Keep secrets outside git. Scout does not currently load `.env` by itself, even
-if a code or data repo ignores that file. Export secrets in the shell, service
-manager, cron environment, or a wrapper script that sources `.env` before
-running Scout.
+Keep secrets outside git. Scout loads a `.env` file automatically on startup,
+looking first in the data dir (`--data-dir` / `SCOUT_DATA_DIR`) and then in the
+current working directory. Real environment variables always win over `.env`
+values, and the data dir's `.env` wins over the cwd's. The repo's `.gitignore`
+already excludes `.env`, so credentials there stay out of git. You can still
+export secrets directly in the shell, service manager, or cron environment
+instead — those take precedence over any `.env` file.
+
+For example, a `.env` in your data dir:
+
+```dotenv
+GEMINI_API_KEY=...
+BRAVE_SEARCH_API_KEY=...
+```
 
 ## Quick Start
 

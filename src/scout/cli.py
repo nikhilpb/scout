@@ -1,14 +1,44 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from datetime import datetime
+from pathlib import Path
 
 from croniter import croniter
+from dotenv import load_dotenv
 
 from scout.config import ConfigError, load_all_topics, load_topic
 from scout.paths import DataPaths, DataPathsError
 from scout.state import read_state
+
+
+def _load_env_files(data_dir_flag: str | None) -> None:
+    """Load credentials from `.env` files into the environment.
+
+    Looks in the data dir (``--data-dir`` flag or ``SCOUT_DATA_DIR``) and the
+    current working directory. Real environment variables always take
+    precedence over `.env` values (``override=False``), and an earlier-loaded
+    file wins over a later one — so the data dir's `.env` beats the cwd's.
+    """
+    candidates: list[Path] = []
+    raw_data_dir = data_dir_flag or os.environ.get("SCOUT_DATA_DIR")
+    if raw_data_dir:
+        candidates.append(Path(raw_data_dir).expanduser() / ".env")
+    candidates.append(Path.cwd() / ".env")
+
+    seen: set[Path] = set()
+    for path in candidates:
+        try:
+            resolved = path.resolve()
+        except OSError:
+            resolved = path
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if path.is_file():
+            load_dotenv(path, override=False)
 
 
 def _cmd_validate(args: argparse.Namespace, data: DataPaths) -> int:
@@ -125,6 +155,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command is None:
         parser.print_help()
         return 0
+
+    _load_env_files(getattr(args, "data_dir", None))
 
     # `init` creates the data dir, so it must run before DataPaths.resolve(),
     # which requires the directory to already exist.
