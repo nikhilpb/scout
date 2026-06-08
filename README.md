@@ -420,6 +420,14 @@ Supported template variables:
 - `{{sources}}`
 - `{{cadence_window}}`
 - `{{history_paths}}`
+- `{{now}}` — this run's start time, UTC (e.g. `2026-06-08 03:00 UTC`)
+- `{{last_run}}` — the previous run's time, UTC, or a cold-start note on the
+  first run. Pair with `{{now}}` to scope a digest strictly to the window
+  between the last run and now.
+
+`{{now}}` and `{{last_run}}` are substituted for every runner (builtin,
+claude-code, codex); the others are substituted by the builtin runner. Any
+placeholder a prompt does not use is left as-is.
 
 ## Global Configuration
 

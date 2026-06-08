@@ -47,6 +47,7 @@ def run_topic(
                     Paths(output_dir=data.output_dir, logs_dir=data.logs_dir),
                     Limits(timeout_seconds=timeout),
                     run_log=rl, now=now,
+                    last_run=state.last_run if state else None,
                 )
         except Exception as e:
             log.exception("runner crashed")
