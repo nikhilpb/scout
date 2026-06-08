@@ -4,11 +4,12 @@ import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 from scout.config import LoadedTopic
 from scout.output import DigestRecord, compose_digest
 from scout.runlog import RunLog
-from scout.runner import Limits, Paths, RunResult
+from scout.runner import Limits, Paths, RunResult, apply_time_window
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "prompts"
 
@@ -22,8 +23,9 @@ class CodexRunner:
         *,
         run_log: RunLog,
         now: datetime,
+        last_run: Optional[datetime] = None,
     ) -> RunResult:
-        prompt = self._build_prompt(topic, now, paths)
+        prompt = self._build_prompt(topic, now, paths, last_run)
         paths.output_dir.mkdir(parents=True, exist_ok=True)
         run_log.event("run_start", slug=topic.slug, runner="codex", model="unknown")
         start = time.monotonic()
@@ -72,12 +74,19 @@ class CodexRunner:
         )
         return RunResult("ok", None, out_path, duration, {})
 
-    def _build_prompt(self, topic: LoadedTopic, now, paths: Paths) -> str:
+    def _build_prompt(
+        self,
+        topic: LoadedTopic,
+        now: datetime,
+        paths: Paths,
+        last_run: Optional[datetime] = None,
+    ) -> str:
         cfg = topic.config
         template_path = PROMPTS_DIR / f"{cfg.prompt.template}.md" if cfg.prompt.template else None
-        template = (
+        template = apply_time_window(
             cfg.prompt.inline if cfg.prompt.inline
-            else (template_path.read_text() if template_path else "")
+            else (template_path.read_text() if template_path else ""),
+            now=now, last_run=last_run,
         )
         rel = f"{topic.slug}/{now.strftime('%Y-%m-%d')}.md"
         return (

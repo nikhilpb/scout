@@ -6,11 +6,12 @@ import time
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 from scout.config import LoadedTopic
 from scout.output import DigestRecord, compose_digest
 from scout.runlog import RunLog
-from scout.runner import Limits, Paths, RunResult
+from scout.runner import Limits, Paths, RunResult, apply_time_window
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "prompts"
 
@@ -45,10 +46,11 @@ class ClaudeCodeRunner:
         *,
         run_log: RunLog,
         now: datetime,
+        last_run: Optional[datetime] = None,
     ) -> RunResult:
         cfg = topic.config
         model = cfg.model or None
-        prompt = self._build_prompt(topic, now)
+        prompt = self._build_prompt(topic, now, last_run)
         # Pre-create the topic's output folder so Write always has a target and
         # Glob has a directory to list when reviewing prior digests.
         (paths.output_dir / topic.slug).mkdir(parents=True, exist_ok=True)
@@ -307,9 +309,13 @@ class ClaudeCodeRunner:
             "permission_denials": permission_denials,
         }
 
-    def _build_prompt(self, topic: LoadedTopic, now: datetime) -> str:
+    def _build_prompt(
+        self, topic: LoadedTopic, now: datetime, last_run: Optional[datetime] = None
+    ) -> str:
         cfg = topic.config
-        template = self._load_body(cfg.prompt)
+        template = apply_time_window(
+            self._load_body(cfg.prompt), now=now, last_run=last_run
+        )
         rel = f"{topic.slug}/{now.strftime('%Y-%m-%d')}.md"
         return (
             f'You are Scout\'s research agent producing a markdown digest for the '

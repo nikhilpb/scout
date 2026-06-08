@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 from scout.agent.llm import LLMClient
 from scout.agent.loop import run_loop
@@ -11,7 +12,7 @@ from scout.agent.tools._types import RunContext
 from scout.config import LoadedTopic
 from scout.output import DigestRecord, compose_digest
 from scout.runlog import RunLog
-from scout.runner import Limits, Paths, RunResult
+from scout.runner import Limits, Paths, RunResult, apply_time_window
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "prompts"
 
@@ -29,10 +30,11 @@ class BuiltinRunner:
         *,
         run_log: RunLog,
         now: datetime,
+        last_run: Optional[datetime] = None,
     ) -> RunResult:
         cfg = topic.config
         allowed = self._allowed_tools(cfg)
-        sys_p, user_p = self._build_prompts(topic, now)
+        sys_p, user_p = self._build_prompts(topic, now, last_run)
         client = default_llm_client()
         ctx = RunContext(
             slug=topic.slug,
@@ -96,7 +98,9 @@ class BuiltinRunner:
             return cfg.tools
         return [name for name, t in reg.items() if t.default_enabled]
 
-    def _build_prompts(self, topic: LoadedTopic, now: datetime) -> tuple[str, str]:
+    def _build_prompts(
+        self, topic: LoadedTopic, now: datetime, last_run: Optional[datetime] = None
+    ) -> tuple[str, str]:
         cfg = topic.config
         sources_block = self._render_sources(cfg.sources)
         system = (
@@ -113,7 +117,9 @@ class BuiltinRunner:
             "read_history if you need to check.\n"
         )
         template_body = self._load_prompt_body(cfg.prompt)
-        user = self._substitute(template_body, topic)
+        user = apply_time_window(
+            self._substitute(template_body, topic), now=now, last_run=last_run
+        )
         return system, user
 
     def _render_sources(self, sources) -> str:
@@ -135,11 +141,13 @@ class BuiltinRunner:
         return (PROMPTS_DIR / f"{prompt.template}.md").read_text()
 
     def _substitute(self, body: str, topic: LoadedTopic) -> str:
+        # Builtin-template-only tokens. {{cadence_window}} (plus {{now}}/{{last_run}})
+        # is handled by the shared apply_time_window in _build_prompts, so it renders
+        # the real run window for every runner instead of the old vague literal.
         cfg = topic.config
         return (
             body.replace("{{title}}", cfg.title)
             .replace("{{description}}", cfg.description)
             .replace("{{sources}}", self._render_sources(cfg.sources))
-            .replace("{{cadence_window}}", "since the last run")
             .replace("{{history_paths}}", "(use read_history tool)")
         )

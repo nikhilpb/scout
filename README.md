@@ -415,11 +415,27 @@ prompt:
 
 Supported template variables:
 
+Run-window variables — substituted for **every** runner (builtin, claude-code,
+codex):
+
+- `{{now}}` — this run's start time, UTC (e.g. `2026-06-08 03:00 UTC`)
+- `{{last_run}}` — the previous **successful** run's time, UTC. Sourced from the
+  last success (not the last attempt), so a failed run does not shrink the next
+  window. On a topic's first run it renders `(no previous run — first run for
+  this topic)`; a prompt that uses `{{last_run}}` as a hard lower bound should
+  branch on that marker (there is no defensible concrete bound on a cold start).
+- `{{cadence_window}}` — a human phrase describing the `[last_run, now]` window
+  (e.g. `since the last run at 2026-06-07 03:00 UTC, through 2026-06-08 03:00
+  UTC`), for templates that want prose rather than raw bounds.
+
+Builtin-template variables — substituted by the **builtin** runner only:
+
 - `{{title}}`
 - `{{description}}`
 - `{{sources}}`
-- `{{cadence_window}}`
 - `{{history_paths}}`
+
+Any placeholder a prompt does not use is left as-is.
 
 ## Global Configuration
 

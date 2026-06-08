@@ -53,3 +53,49 @@ def test_full_pipeline(tmp_path, monkeypatch):
     st = read_state("smoke", data.state_dir)
     assert st is not None
     assert st.last_status == "ok"
+    # A successful run records itself as the last success (window upper bound).
+    assert st.last_success_run is not None
+    assert st.last_success_run == st.last_run
+
+
+@pytest.mark.integration
+def test_failed_run_preserves_success_window(tmp_path, monkeypatch):
+    """A failed run advances last_run but must NOT advance last_success_run, and
+    the window lower bound handed to the runner is the prior success — so a
+    failure cannot silently drop the slice it owed."""
+    from scout import worker as wk
+    from scout.runner import RunResult
+    from scout.state import TopicState, read_state, write_state_atomic
+
+    data_root = tmp_path / "scout-data"
+    (data_root / "topics").mkdir(parents=True)
+    shutil.copy(
+        Path(__file__).parent.parent / "fixtures" / "topics" / "smoke.yaml",
+        data_root / "topics" / "smoke.yaml",
+    )
+    data = make_data_paths(data_root)
+
+    prior_success = datetime(2026, 5, 20, 3, 0, tzinfo=timezone.utc)
+    write_state_atomic("smoke", data.state_dir, TopicState(
+        last_run=prior_success, last_status="ok", last_error=None,
+        last_duration_seconds=1.0, last_success_run=prior_success,
+    ))
+
+    seen = {}
+
+    class FailingRunner:
+        def execute(self, topic, paths, limits, *, run_log, now, last_run=None):
+            seen["last_run"] = last_run
+            return RunResult("failed", "boom", None, 0.1, {})
+
+    monkeypatch.setattr(wk, "make_runner", lambda name: FailingRunner())
+
+    rc = run_topic("smoke", data=data, force=True)
+    assert rc == 1
+
+    # The runner was scoped to the last *successful* run, not the failed attempt.
+    assert seen["last_run"] == prior_success
+    st = read_state("smoke", data.state_dir)
+    assert st.last_status == "failed"
+    assert st.last_run > prior_success          # attempt advanced
+    assert st.last_success_run == prior_success  # success window preserved
