@@ -75,7 +75,11 @@ class CodexRunner:
         return RunResult("ok", None, out_path, duration, {})
 
     def _build_prompt(
-        self, topic: LoadedTopic, now, paths: Paths, last_run: Optional[datetime] = None
+        self,
+        topic: LoadedTopic,
+        now: datetime,
+        paths: Paths,
+        last_run: Optional[datetime] = None,
     ) -> str:
         cfg = topic.config
         template_path = PROMPTS_DIR / f"{cfg.prompt.template}.md" if cfg.prompt.template else None

@@ -15,10 +15,35 @@ def test_write_then_read_roundtrip(tmp_path):
         last_status="ok",
         last_error=None,
         last_duration_seconds=38.2,
+        last_success_run=datetime(2026, 5, 20, 7, 0, 0, tzinfo=timezone.utc),
     )
     write_state_atomic("ai-research", tmp_path, s)
     out = read_state("ai-research", tmp_path)
     assert out == s
+
+
+def test_legacy_state_without_success_field_migrates(tmp_path):
+    import json
+
+    # A pre-feature state file has no `last_success_run`. When the last recorded
+    # run succeeded it is treated as the last success; when it failed there is
+    # no known success.
+    (tmp_path / "ok.json").write_text(json.dumps({
+        "last_run": "2026-05-20T07:00:00+00:00",
+        "last_status": "ok",
+        "last_error": None,
+        "last_duration_seconds": 1.0,
+    }))
+    (tmp_path / "bad.json").write_text(json.dumps({
+        "last_run": "2026-05-20T07:00:00+00:00",
+        "last_status": "failed",
+        "last_error": "boom",
+        "last_duration_seconds": 1.0,
+    }))
+    ok = read_state("ok", tmp_path)
+    bad = read_state("bad", tmp_path)
+    assert ok.last_success_run == datetime(2026, 5, 20, 7, 0, 0, tzinfo=timezone.utc)
+    assert bad.last_success_run is None
 
 
 def test_corrupted_file_returns_none(tmp_path, caplog):

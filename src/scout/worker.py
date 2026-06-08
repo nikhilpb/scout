@@ -29,6 +29,10 @@ def run_topic(
         print(f"{slug}: not due")
         return 0
 
+    # Window lower bound = the last *successful* run, so a prior failure doesn't
+    # leave a coverage gap. Preserved unchanged on failure/crash below.
+    prev_success = state.last_success_run if state else None
+
     with acquire_lock(slug, data.state_dir) as got:
         if not got:
             print(f"{slug}: skipped (locked)")
@@ -47,13 +51,14 @@ def run_topic(
                     Paths(output_dir=data.output_dir, logs_dir=data.logs_dir),
                     Limits(timeout_seconds=timeout),
                     run_log=rl, now=now,
-                    last_run=state.last_run if state else None,
+                    last_run=prev_success,
                 )
         except Exception as e:
             log.exception("runner crashed")
             write_state_atomic(slug, data.state_dir, TopicState(
                 last_run=now, last_status="failed",
                 last_error=f"runner_crashed: {e}", last_duration_seconds=0.0,
+                last_success_run=prev_success,
             ))
             return 1
 
@@ -62,6 +67,7 @@ def run_topic(
             last_status=result.status,
             last_error=result.reason if result.status == "failed" else None,
             last_duration_seconds=result.duration_seconds,
+            last_success_run=now if result.status == "ok" else prev_success,
         ))
         msg = f"{slug}: {result.status}"
         if result.reason:

@@ -141,11 +141,13 @@ class BuiltinRunner:
         return (PROMPTS_DIR / f"{prompt.template}.md").read_text()
 
     def _substitute(self, body: str, topic: LoadedTopic) -> str:
+        # Builtin-template-only tokens. {{cadence_window}} (plus {{now}}/{{last_run}})
+        # is handled by the shared apply_time_window in _build_prompts, so it renders
+        # the real run window for every runner instead of the old vague literal.
         cfg = topic.config
         return (
             body.replace("{{title}}", cfg.title)
             .replace("{{description}}", cfg.description)
             .replace("{{sources}}", self._render_sources(cfg.sources))
-            .replace("{{cadence_window}}", "since the last run")
             .replace("{{history_paths}}", "(use read_history tool)")
         )
