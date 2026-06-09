@@ -28,6 +28,7 @@ frontmatter.
 - [CLI Reference](#cli-reference)
 - [Output, State, and Logs](#output-state-and-logs)
 - [Feedback Workflow](#feedback-workflow)
+- [Web App (PWA)](#web-app-pwa)
 - [Running on a Schedule](#running-on-a-schedule)
 - [Development](#development)
 - [Project Layout](#project-layout)
@@ -642,6 +643,22 @@ uv --project ../scout run scout doctor
 Shows per-topic success count, failure count, total observed cost, and most
 recent error.
 
+### `scout serve`
+
+Serve the data repo's digests as a mobile-friendly web app:
+
+```bash
+uv --project ../scout run scout serve
+```
+
+Options:
+
+- `--host`: bind address (default: `127.0.0.1`).
+- `--port`: port (default: `8533`).
+
+See [Web App (PWA)](#web-app-pwa) for what it serves and how to install it on
+a phone.
+
 ### `scout feedback add`
 
 Append a feedback block to a digest:
@@ -771,6 +788,47 @@ In v1, feedback is captured but not automatically incorporated into future
 prompts. Because feedback lives in the digest file, it stays alongside the
 digest and can later be read by agents through history.
 
+## Web App (PWA)
+
+`scout serve` runs a small FastAPI server that renders the data repo's
+digests as an installable progressive web app:
+
+- **Latest** — newest digests across all topics in one feed.
+- **Topics** — every topic that has output (including paused/disabled ones),
+  with unread-count badges.
+- **Digest** — the rendered Markdown, a collapsible "Run details" section
+  (runner, model, duration, tokens, cost, tool calls), and a feedback form.
+
+Feedback submitted from the app is appended to the digest file as a standard
+`scout-feedback` block (with `source: web`), so `scout feedback list` and
+agents reading history see it like any other feedback. Read/unread state is
+stored in the browser's local storage; it does not sync across devices.
+
+### Installing on a phone
+
+Android Chrome only installs PWAs (and registers their service worker) from
+an HTTPS origin, so the easiest path to your phone is
+[Tailscale](https://tailscale.com/):
+
+```bash
+uv --project ../scout run scout serve          # binds 127.0.0.1:8533
+tailscale serve --bg 8533                      # one-time; HTTPS on your tailnet
+```
+
+`tailscale serve` prints the URL (`https://<machine>.<tailnet>.ts.net`). Open
+it in Chrome on the phone (with Tailscale connected) and choose
+**Install app** / **Add to Home Screen** from the menu.
+
+Without HTTPS the app still works as a plain website over the LAN — run with
+`--host 0.0.0.0` and open `http://<machine-ip>:8533`; only installability and
+the service worker are lost.
+
+### Icons
+
+The PWA icons are committed under `src/scout/server/static/icons/` and
+regenerated with `python3 scripts/gen_icons.py` (needs Pillow, which is
+deliberately not a project dependency).
+
 ## Running on a Schedule
 
 Make sure the data repo has the expected runtime directories:
@@ -876,6 +934,7 @@ scout/
 |   |-- runner.py
 |   |-- runners/
 |   |-- agent/
+|   |-- server/
 |   |-- output.py
 |   |-- state.py
 |   |-- runlog.py

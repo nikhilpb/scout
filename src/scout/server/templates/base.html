@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>{% block title %}Scout{% endblock %}</title>
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f7f7f5">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0e1113">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/static/icons/icon-180.png">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body{% block body_attrs %}{% endblock %}>
+  <header class="appbar">
+    <div class="appbar-inner">
+      {% block appbar %}<span class="appbar-title">Scout</span>{% endblock %}
+    </div>
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+  <nav class="tabbar">
+    <a href="/" {% if nav == "latest" %}aria-current="page"{% endif %}>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11.5 12 4l8 7.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M6.2 10.2V20h11.6v-9.8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>Latest</span>
+    </a>
+    <a href="/topics" {% if nav == "topics" %}aria-current="page"{% endif %}>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      <span>Topics</span>
+    </a>
+  </nav>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

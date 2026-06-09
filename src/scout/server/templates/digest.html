@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}{{ digest.meta.title or digest.meta.name }} — Scout{% endblock %}
+{% block body_attrs %} data-digest-id="{{ digest.meta.id }}"{% endblock %}
+{% block appbar %}
+  <a class="appbar-back" href="/t/{{ digest.meta.topic }}" aria-label="Back to {{ topic_title }}">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 5 8 12l6.5 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </a>
+  <span class="appbar-title">{{ topic_title }}</span>
+{% endblock %}
+{% block content %}
+  <article class="digest">
+    <div class="digest-head">
+      <span class="topic-chip">{{ topic_title }}</span>
+      <span class="digest-date">{{ digest.meta.pretty_date }}</span>
+    </div>
+    <div class="prose">{{ digest.html | safe }}</div>
+
+    {% set fm = digest.frontmatter %}
+    {% if fm %}
+      <details class="run-meta">
+        <summary>Run details</summary>
+        <table>
+          {% if fm.runner %}<tr><th>Runner</th><td>{{ fm.runner }}</td></tr>{% endif %}
+          {% if fm.model %}<tr><th>Model</th><td>{{ fm.model }}</td></tr>{% endif %}
+          {% if fm.duration_seconds is number %}
+            <tr><th>Duration</th><td>{{ (fm.duration_seconds // 60) | int }}m {{ (fm.duration_seconds % 60) | round | int }}s</td></tr>
+          {% endif %}
+          {% if fm.tokens is mapping %}
+            <tr><th>Tokens</th><td>{{ "{:,}".format(fm.tokens.get("input", 0)) }} in · {{ "{:,}".format(fm.tokens.get("output", 0)) }} out</td></tr>
+          {% endif %}
+          {% if fm.cost_usd is number %}<tr><th>Cost</th><td>${{ "%.2f" | format(fm.cost_usd) }}</td></tr>{% endif %}
+          {% if fm.tool_calls is mapping %}
+            <tr><th>Tool calls</th><td>{% for k, v in fm.tool_calls.items() %}{{ k }}&nbsp;×{{ v }}{% if not loop.last %} · {% endif %}{% endfor %}</td></tr>
+          {% endif %}
+        </table>
+      </details>
+    {% endif %}
+
+    <section class="feedback" aria-label="Feedback">
+      <h2 class="section-heading">Feedback</h2>
+      <ul class="feedback-list" {% if not digest.feedback %}hidden{% endif %}>
+        {% for fb in digest.feedback %}
+          <li class="feedback-item">
+            {% if fb.rating is number %}
+              <span class="feedback-stars" aria-label="{{ fb.rating }} out of 5">{% for _ in range(fb.rating | int) %}★{% endfor %}{% for _ in range(5 - fb.rating | int) %}<span class="star-off">★</span>{% endfor %}</span>
+            {% endif %}
+            {% if fb.notes %}<p class="feedback-notes">{{ fb.notes }}</p>{% endif %}
+            {% if fb.at %}<p class="feedback-when">{{ fb.at }}</p>{% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+      <form class="feedback-form" data-topic="{{ digest.meta.topic }}" data-name="{{ digest.meta.name }}">
+        <div class="stars" role="radiogroup" aria-label="Rating">
+          {% for i in [5, 4, 3, 2, 1] %}
+            <input type="radio" id="star-{{ i }}" name="rating" value="{{ i }}">
+            <label for="star-{{ i }}" aria-label="{{ i }} star{{ 's' if i != 1 }}">★</label>
+          {% endfor %}
+        </div>
+        <textarea name="notes" rows="3" placeholder="What was good or off about this digest?"></textarea>
+        <button type="submit">Send feedback</button>
+      </form>
+    </section>
+  </article>
+{% endblock %}

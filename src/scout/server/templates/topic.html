@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Scout — {{ topic.title }}{% endblock %}
+{% block appbar %}
+  <a class="appbar-back" href="/topics" aria-label="Back to topics">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 5 8 12l6.5 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </a>
+  <span class="appbar-title">{{ topic.title }}</span>
+  <button class="appbar-action" data-mark-all hidden>Mark all read</button>
+{% endblock %}
+{% block content %}
+  {% if topic.description %}<p class="topic-page-desc">{{ topic.description }}</p>{% endif %}
+  <ul class="card-list">
+    {% for d in topic.digests %}
+      <li>
+        <a class="card digest-card" href="/t/{{ d.topic }}/{{ d.name }}" data-id="{{ d.id }}">
+          <div class="digest-card-top">
+            <span class="digest-date">{{ d.pretty_date }}</span>
+          </div>
+          <h2 class="digest-title"><span class="unread-dot" aria-hidden="true"></span>{{ d.title or d.name }}</h2>
+          {% if d.teaser %}<p class="digest-teaser">{{ d.teaser }}</p>{% endif %}
+        </a>
+      </li>
+    {% endfor %}
+  </ul>
+{% endblock %}

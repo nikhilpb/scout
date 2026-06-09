@@ -139,6 +139,10 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("tick", help="orchestrator (run from cron)")
     sub.add_parser("doctor", help="health summary across last 7 days")
 
+    serve_p = sub.add_parser("serve", help="serve digests as a web app (PWA)")
+    serve_p.add_argument("--host", default="127.0.0.1", help="bind address (default: 127.0.0.1)")
+    serve_p.add_argument("--port", type=int, default=8533, help="port (default: 8533)")
+
     fb = sub.add_parser("feedback", help="capture or report feedback")
     fb_sub = fb.add_subparsers(dest="fb_cmd", required=True)
     fb_list = fb_sub.add_parser("list")
@@ -182,6 +186,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "doctor":
         from scout.doctor import doctor
         return doctor(data)
+    if args.command == "serve":
+        import uvicorn
+
+        from scout.server.app import create_app
+        uvicorn.run(create_app(data), host=args.host, port=args.port)
+        return 0
     if args.command == "feedback":
         from scout.feedback import append_block, find_latest, parse_blocks
         output_dir = data.output_dir
