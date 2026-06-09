@@ -57,6 +57,47 @@ def test_load_all_skips_invalid(tmp_path, caplog):
     assert any("bad.yaml" in r.message for r in caplog.records)
 
 
+def test_effort_accepted_for_claude_code_runner(tmp_path):
+    p = tmp_path / "x.yaml"
+    write(p, """
+        title: x
+        description: d
+        cadence: "0 * * * *"
+        runner: claude-code
+        effort: xhigh
+        prompt: {template: briefing}
+    """)
+    assert load_topic(p).config.effort == "xhigh"
+
+
+def test_effort_rejected_for_builtin_runner(tmp_path):
+    p = tmp_path / "x.yaml"
+    write(p, """
+        title: x
+        description: d
+        cadence: "0 * * * *"
+        model: "m"
+        effort: high
+        prompt: {template: briefing}
+    """)
+    with pytest.raises(ConfigError, match="effort"):
+        load_topic(p)
+
+
+def test_invalid_effort_level_rejected(tmp_path):
+    p = tmp_path / "x.yaml"
+    write(p, """
+        title: x
+        description: d
+        cadence: "0 * * * *"
+        runner: claude-code
+        effort: turbo
+        prompt: {template: briefing}
+    """)
+    with pytest.raises(ConfigError, match="effort"):
+        load_topic(p)
+
+
 def test_warning_for_tools_on_cli_runner(tmp_path, caplog):
     p = tmp_path / "x.yaml"
     write(p, """

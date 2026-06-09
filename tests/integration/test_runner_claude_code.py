@@ -135,6 +135,46 @@ def test_claude_code_runner_captures_metrics(tmp_path, monkeypatch):
 
 
 @pytest.mark.integration
+def test_claude_code_runner_passes_model_and_effort(tmp_path, monkeypatch):
+    bindir = tmp_path / "bin"
+    out_dir = tmp_path / "output"
+    logs_dir = tmp_path / "logs"
+    now = datetime(2026, 5, 20, 7, tzinfo=timezone.utc)
+    # Fake CLI records its argv so the test can assert on the flags it received.
+    bindir.mkdir(parents=True)
+    argv_file = tmp_path / "argv.txt"
+    script = bindir / "claude"
+    script.write_text(textwrap.dedent(f"""\
+        #!/bin/sh
+        printf '%s\\n' "$@" > {argv_file}
+        mkdir -p ai
+        printf %s '# body' > ai/2026-05-20.md
+    """))
+    script.chmod(script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    monkeypatch.setenv("PATH", f"{bindir}:{os.environ['PATH']}")
+    topic = LoadedTopic(
+        slug="ai", path=Path("topics/ai.yaml"),
+        config=TopicConfig(
+            title="AI", description="AI research.",
+            cadence="0 7 * * *", runner="claude-code", model="claude-opus-4-8",
+            effort="xhigh", prompt={"template": "briefing"},
+        ),
+    )
+    runner = make_runner("claude-code")
+    with RunLog("ai", logs_dir, now=now) as rl:
+        result = runner.execute(
+            topic,
+            Paths(output_dir=out_dir, logs_dir=logs_dir),
+            Limits(timeout_seconds=10),
+            run_log=rl, now=now,
+        )
+    assert result.status == "ok"
+    argv = argv_file.read_text().splitlines()
+    assert argv[argv.index("--model") + 1] == "claude-opus-4-8"
+    assert argv[argv.index("--effort") + 1] == "xhigh"
+
+
+@pytest.mark.integration
 def test_claude_code_runner_timeout_salvages_partial(tmp_path, monkeypatch):
     bindir = tmp_path / "bin"
     out_dir = tmp_path / "output"
