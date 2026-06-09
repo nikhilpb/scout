@@ -66,6 +66,8 @@ class ClaudeCodeRunner:
         ]
         if model:
             cmd += ["--model", model]
+        if cfg.effort:
+            cmd += ["--effort", cfg.effort]
         # `--tools` bounds what the model can call; `--allowedTools` pre-approves
         # those same tools. `--allowedTools` is variadic and goes last so nothing
         # following it gets swallowed as a tool name.

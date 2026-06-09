@@ -109,6 +109,7 @@ class TopicConfig(BaseModel):
     sources: list[Source] = Field(default_factory=list)
     runner: Literal["builtin", "claude-code", "codex"] = "builtin"
     model: Optional[str] = None
+    effort: Optional[Literal["low", "medium", "high", "xhigh", "max"]] = None
     prompt: Prompt
     limits: Optional[Limits] = None
     tools: Optional[list[str]] = None
@@ -119,6 +120,8 @@ class TopicConfig(BaseModel):
             raise ValueError(f"invalid cron expression: {self.cadence}")
         if self.runner == "builtin" and not self.model:
             raise ValueError("`model` is required when runner=builtin")
+        if self.effort is not None and self.runner != "claude-code":
+            raise ValueError("`effort` is only supported when runner=claude-code")
         if self.tools is not None:
             extra = set(self.tools) - BUILTIN_TOOLS
             if extra:

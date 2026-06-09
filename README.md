@@ -358,6 +358,9 @@ tools:
   the agent is allowed to search and follow additional sources.
 - `runner`: One of `builtin`, `claude-code`, or `codex`. Defaults to
   `builtin`.
+- `effort`: Reasoning effort for the `claude-code` runner, passed to
+  `claude --effort`. One of `low`, `medium`, `high`, `xhigh`, or `max`. If
+  omitted, the CLI uses its own default. Rejected for other runners.
 - `limits.timeout_seconds`: Per-topic wall-clock timeout. If omitted, Scout
   uses the global timeout from `scout.toml`.
 - `tools`: Built-in runner tool allowlist. If omitted, Scout enables every
