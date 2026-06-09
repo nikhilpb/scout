@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Scout — Topics{% endblock %}
+{% block appbar %}<span class="appbar-title">Topics</span>{% endblock %}
+{% block content %}
+  {% if topics %}
+    <ul class="card-list">
+      {% for t in topics %}
+        <li>
+          <a class="card topic-card" href="/t/{{ t.slug }}">
+            <div class="topic-card-top">
+              <h2 class="topic-title">{{ t.title }}</h2>
+              <span class="badge" data-unread-for="{{ t.slug }}" hidden></span>
+            </div>
+            {% if t.description %}<p class="topic-desc">{{ t.description }}</p>{% endif %}
+            <p class="topic-meta">
+              {{ t.digests | length }} digest{{ "s" if t.digests | length != 1 }}
+              {% if t.latest %} · latest {{ t.latest.pretty_date }}{% endif %}
+              {% if t.disabled %} · <span class="tag-paused">paused</span>{% endif %}
+            </p>
+          </a>
+        </li>
+      {% endfor %}
+    </ul>
+    <script type="application/json" id="digest-index">{{ digest_index | safe }}</script>
+  {% else %}
+    <div class="empty-state">
+      <p>No topics yet.</p>
+      <p class="muted">Add topic YAMLs to the data repo and run scout.</p>
+    </div>
+  {% endif %}
+{% endblock %}

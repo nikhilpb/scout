@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Scout — Latest{% endblock %}
+{% block appbar %}<span class="appbar-title">Latest</span>{% endblock %}
+{% block content %}
+  {% if feed %}
+    <ul class="card-list">
+      {% for d in feed %}
+        <li>
+          <a class="card digest-card" href="/t/{{ d.topic }}/{{ d.name }}" data-id="{{ d.id }}">
+            <div class="digest-card-top">
+              <span class="topic-chip">{{ topic_titles.get(d.topic, d.topic) }}</span>
+              <span class="digest-date">{{ d.pretty_date }}</span>
+            </div>
+            <h2 class="digest-title"><span class="unread-dot" aria-hidden="true"></span>{{ d.title or d.name }}</h2>
+            {% if d.teaser %}<p class="digest-teaser">{{ d.teaser }}</p>{% endif %}
+          </a>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <div class="empty-state">
+      <p>No digests yet.</p>
+      <p class="muted">Once scout runs a topic, its digests will show up here.</p>
+    </div>
+  {% endif %}
+{% endblock %}
