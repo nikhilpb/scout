@@ -26,6 +26,7 @@ def test_subdirs_derived_from_root(tmp_path, monkeypatch):
     assert dp.output_dir == tmp_path.resolve() / "output"
     assert dp.state_dir == tmp_path.resolve() / "state"
     assert dp.logs_dir == tmp_path.resolve() / "logs"
+    assert dp.trajectories_dir == tmp_path.resolve() / "trajectories"
     assert dp.config_path == tmp_path.resolve() / "scout.toml"
 
 

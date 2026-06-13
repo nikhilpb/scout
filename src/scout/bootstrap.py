@@ -21,11 +21,14 @@ max_concurrent_workers = 3
 # this section is reserved for future overrides.
 """
 
+# trajectories/ is committed (full run provenance lives in the repo). state/ is
+# per-machine scheduler state, and logs/ holds operational stdout (e.g. the cron
+# tick log) — both stay out of git.
 GITIGNORE_BODY = "state/\nlogs/\n"
 
-_SUBDIRS = ("topics", "output", "state", "logs")
+_SUBDIRS = ("topics", "output", "state", "logs", "trajectories")
 # state/ and logs/ are gitignored, so .gitkeep only helps the committed dirs.
-_GITKEEP_DIRS = ("topics", "output")
+_GITKEEP_DIRS = ("topics", "output", "trajectories")
 
 
 class BootstrapError(Exception):

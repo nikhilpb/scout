@@ -1,4 +1,3 @@
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -6,8 +5,9 @@ import pytest
 
 from scout.agent.llm import Response, ToolCall
 from scout.config import LoadedTopic, TopicConfig
-from scout.runlog import RunLog
 from scout.runner import Limits, Paths, make_runner
+from scout.trajectory import TrajectoryWriter
+from tests.conftest import only_trajectory
 from tests.fakes.llm import FakeLLMClient
 
 TOPIC = LoadedTopic(
@@ -42,15 +42,15 @@ def test_builtin_run_writes_full_digest(tmp_path, monkeypatch):
     monkeypatch.setattr(br, "PROMPTS_DIR", prompts_dir)
 
     output_dir = tmp_path / "output"
-    logs_dir = tmp_path / "logs"
+    traj_dir = tmp_path / "trajectories"
     now = datetime(2026, 5, 20, 7, 0, 0, tzinfo=timezone.utc)
     runner = make_runner("builtin")
-    with RunLog("ai", logs_dir, now=now) as rl:
+    with TrajectoryWriter("ai", traj_dir, now=now) as tw:
         result = runner.execute(
             TOPIC,
-            Paths(output_dir=output_dir, logs_dir=logs_dir),
+            Paths(output_dir=output_dir, trajectories_dir=traj_dir),
             Limits(timeout_seconds=10),
-            run_log=rl, now=now,
+            traj=tw, now=now,
         )
     assert result.status == "ok"
     p = output_dir / "ai" / "2026-05-20.md"
@@ -59,17 +59,30 @@ def test_builtin_run_writes_full_digest(tmp_path, monkeypatch):
     assert content.startswith("---\n")
     assert "topic: ai" in content
     assert "# AI today" in content
-    # telemetry is captured
+    # telemetry is captured in the digest frontmatter
     assert "write_digest: 1" in content
     assert "input: 100" in content
     assert "output: 10" in content
     assert "cost_usd: 0.01" in content
-    # per-run JSONL exists and includes llm_turn + tool_call events
-    jsonl_files = list((logs_dir / "ai").glob("*.jsonl"))
-    assert len(jsonl_files) == 1
-    events = [json.loads(line) for line in jsonl_files[0].read_text().splitlines()]
-    event_names = [e["event"] for e in events]
-    assert "run_start" in event_names
-    assert "llm_turn" in event_names
-    assert "tool_call" in event_names
-    assert "run_end" in event_names
+    # one schema-valid trajectory with messages, the tool call/result, artifact, result
+    recs = only_trajectory(traj_dir, "ai")
+    types = [r["type"] for r in recs]
+    assert "message" in types
+    assert "tool_call" in types
+    assert "tool_result" in types
+    assert "artifact" in types
+    assert types[-1] == "result"
+    assert recs[-1]["status"] == "ok"
+    assert recs[-1]["tool_calls"] == {"write_digest": 1}
+    tool_names = [r["name"] for r in recs if r["type"] == "tool_call"]
+    assert tool_names == ["write_digest"]
+    # the assistant turn records its model and token usage
+    assistant = next(
+        r for r in recs if r["type"] == "message" and r["role"] == "assistant"
+    )
+    assert assistant["usage"]["input_tokens"] == 100
+    assert assistant["usage"]["output_tokens"] == 10
+    # the digest is recorded as an artifact pointing at the output file
+    artifact = next(r for r in recs if r["type"] == "artifact")
+    assert artifact["path"] == "output/ai/2026-05-20.md"
+    assert artifact["kind"] == "digest"

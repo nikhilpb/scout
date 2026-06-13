@@ -1,10 +1,44 @@
 import json
+from datetime import datetime, timezone
 
 from scout.runners.claude_code import ClaudeCodeRunner
+from scout.trajectory import TrajectoryWriter
+from tests.conftest import read_trajectory
 
 
 def _stream(*events: dict) -> str:
     return "\n".join(json.dumps(e) for e in events) + "\n"
+
+
+def test_emit_records_translates_messages_tools_and_results(tmp_path):
+    stdout = _stream(
+        {"type": "assistant", "message": {"model": "claude-opus-4-8", "content": [
+            {"type": "thinking", "thinking": "let me search"},
+            {"type": "tool_use", "id": "c1", "name": "WebSearch", "input": {"query": "x"}},
+        ]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "c1", "content": "5 hits"},
+        ]}},
+        {"type": "assistant", "message": {"content": [
+            {"type": "text", "text": "Here is the summary."},
+        ]}},
+    )
+    now = datetime(2026, 6, 13, tzinfo=timezone.utc)
+    with TrajectoryWriter("ai", tmp_path, now=now) as tw:
+        ClaudeCodeRunner()._emit_records(tw, stdout)
+    recs = read_trajectory(tw.path)
+    types = [r["type"] for r in recs]
+    assert types == ["message", "tool_call", "tool_result", "message"]
+    # reasoning block is captured inline as a reasoning content part
+    first = recs[0]
+    assert any(p["type"] == "reasoning" for p in first["content"])
+    assert first["model"] == "claude-opus-4-8"
+    # the tool_use became a tool_call, and the user tool_result links back to it
+    call = recs[1]
+    result = recs[2]
+    assert call["call_id"] == "c1" and result["call_id"] == "c1"
+    assert result["parent_id"] == call["id"]
+    assert tw.summary()["tool_calls"] == {"WebSearch": 1}
 
 
 def test_parse_stream_full_metrics():

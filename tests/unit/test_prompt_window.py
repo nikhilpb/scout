@@ -87,6 +87,6 @@ def test_claude_code_injects_window_into_prompt():
 
 def test_codex_injects_window_into_prompt():
     topic = _topic("window: {{last_run}} .. {{now}}")
-    paths = Paths(output_dir=Path("."), logs_dir=Path("."))
+    paths = Paths(output_dir=Path("."), trajectories_dir=Path("."))
     prompt = CodexRunner()._build_prompt(topic, NOW, paths, LAST)
     assert "window: 2026-06-07 03:00 UTC .. 2026-06-08 03:00 UTC" in prompt

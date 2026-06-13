@@ -7,9 +7,9 @@ from pathlib import Path
 from typing import Optional
 
 from scout.config import LoadedTopic
-from scout.output import DigestRecord, compose_digest
-from scout.runlog import RunLog
+from scout.output import DigestRecord, compose_digest, first_heading
 from scout.runner import Limits, Paths, RunResult, apply_time_window
+from scout.trajectory import TrajectoryWriter
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "prompts"
 
@@ -21,13 +21,12 @@ class CodexRunner:
         paths: Paths,
         limits: Limits,
         *,
-        run_log: RunLog,
+        traj: TrajectoryWriter,
         now: datetime,
         last_run: Optional[datetime] = None,
     ) -> RunResult:
         prompt = self._build_prompt(topic, now, paths, last_run)
         paths.output_dir.mkdir(parents=True, exist_ok=True)
-        run_log.event("run_start", slug=topic.slug, runner="codex", model="unknown")
         start = time.monotonic()
         try:
             proc = subprocess.run(
@@ -36,28 +35,19 @@ class CodexRunner:
                 capture_output=True, text=True,
                 timeout=limits.timeout_seconds,
             )
-            run_log.event(
-                "subprocess_output",
-                stdout=proc.stdout[-2000:], stderr=proc.stderr[-2000:],
-                returncode=proc.returncode,
-            )
         except subprocess.TimeoutExpired:
             duration = time.monotonic() - start
-            run_log.event(
-                "run_end", status="failed", reason="timeout",
-                duration_seconds=duration, tool_calls="unknown",
-                tokens="unknown", cost_usd="unknown",
-            )
+            traj.result(status="failed", reason="timeout", duration_seconds=duration)
             return RunResult("failed", "timeout", None, duration, {})
         duration = time.monotonic() - start
+        # The codex CLI exposes no structured stream, so the trajectory carries the
+        # tail of its output as a single assistant message plus the run envelope.
+        traj.message("assistant", proc.stdout[-2000:] or "(no output)",
+                     stop_reason=f"exit_{proc.returncode}")
 
         out_path = paths.output_dir / topic.slug / f"{now.strftime('%Y-%m-%d')}.md"
         if not out_path.exists():
-            run_log.event(
-                "run_end", status="failed", reason="no_digest",
-                duration_seconds=duration, tool_calls="unknown",
-                tokens="unknown", cost_usd="unknown",
-            )
+            traj.result(status="failed", reason="no_digest", duration_seconds=duration)
             return RunResult("failed", "no_digest", None, duration, {})
 
         body = out_path.read_text()
@@ -67,12 +57,20 @@ class CodexRunner:
             duration_seconds=round(duration, 2),
             tool_calls="unknown", tokens="unknown", cost_usd="unknown",
         )
-        out_path.write_text(compose_digest(rec, body))
-        run_log.event(
-            "run_end", status="ok", duration_seconds=duration,
-            tool_calls="unknown", tokens="unknown", cost_usd="unknown",
-        )
+        composed = compose_digest(rec, body)
+        out_path.write_text(composed)
+        rel = self._rel(out_path, paths)
+        traj.artifact(kind="digest", path=rel, media_type="text/markdown",
+                      size_bytes=len(composed.encode("utf-8")), summary=first_heading(body))
+        traj.result(status="ok", duration_seconds=duration, artifacts=[rel])
         return RunResult("ok", None, out_path, duration, {})
+
+    @staticmethod
+    def _rel(path: Path, paths: Paths) -> str:
+        try:
+            return str(path.relative_to(paths.output_dir.parent))
+        except ValueError:
+            return str(path)
 
     def _build_prompt(
         self,

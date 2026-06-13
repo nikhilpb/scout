@@ -1,0 +1,33 @@
+{% extends "traj_base.html" %}
+{% block title %}Scout Trajectories{% endblock %}
+{% block body %}
+  <h1>Recent runs</h1>
+  <p class="muted">{{ topics|length }} topic(s) with recorded trajectories.</p>
+
+  {% if recent %}
+  <table>
+    <thead>
+      <tr>
+        <th>Started</th><th>Topic</th><th>Runner</th><th>Model</th>
+        <th>Status</th><th class="num">Duration</th><th class="num">Cost</th><th class="num">Tokens</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in recent %}
+      <tr>
+        <td><a href="/r/{{ r.slug }}/{{ r.run_id }}">{{ r.pretty_started }}</a></td>
+        <td><a href="/t/{{ r.slug }}">{{ r.title or r.slug }}</a></td>
+        <td>{{ r.runner }}</td>
+        <td class="muted">{{ r.model }}</td>
+        <td><span class="pill {{ r.status }}">{{ r.status }}</span></td>
+        <td class="num">{% if r.duration_seconds is not none %}{{ "%.1f"|format(r.duration_seconds) }}s{% else %}—{% endif %}</td>
+        <td class="num">{% if r.cost_usd is not none %}${{ "%.4f"|format(r.cost_usd) }}{% else %}—{% endif %}</td>
+        <td class="num">{% if r.input_tokens is not none %}{{ r.input_tokens }}/{{ r.output_tokens }}{% else %}—{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No trajectories yet. Run a topic to record one.</p>
+  {% endif %}
+{% endblock %}

@@ -143,6 +143,12 @@ def main(argv: list[str] | None = None) -> int:
     serve_p.add_argument("--host", default="127.0.0.1", help="bind address (default: 127.0.0.1)")
     serve_p.add_argument("--port", type=int, default=8533, help="port (default: 8533)")
 
+    traj_p = sub.add_parser("trajectories", help="browse agent run trajectories")
+    traj_sub = traj_p.add_subparsers(dest="traj_cmd", required=True)
+    traj_serve = traj_sub.add_parser("serve", help="serve the trajectory dashboard")
+    traj_serve.add_argument("--host", default="127.0.0.1", help="bind address (default: 127.0.0.1)")
+    traj_serve.add_argument("--port", type=int, default=8534, help="port (default: 8534)")
+
     fb = sub.add_parser("feedback", help="capture or report feedback")
     fb_sub = fb.add_subparsers(dest="fb_cmd", required=True)
     fb_list = fb_sub.add_parser("list")
@@ -192,6 +198,13 @@ def main(argv: list[str] | None = None) -> int:
         from scout.server.app import create_app
         uvicorn.run(create_app(data), host=args.host, port=args.port)
         return 0
+    if args.command == "trajectories":
+        if args.traj_cmd == "serve":
+            import uvicorn
+
+            from scout.server.trajectory_app import create_trajectory_app
+            uvicorn.run(create_trajectory_app(data), host=args.host, port=args.port)
+            return 0
     if args.command == "feedback":
         from scout.feedback import append_block, find_latest, parse_blocks
         output_dir = data.output_dir

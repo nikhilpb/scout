@@ -1,10 +1,10 @@
-import json
 import textwrap
 from datetime import datetime, timezone
 
 import pytest
 
 from scout.state import read_state
+from tests.conftest import read_trajectory
 from tests.smoke.conftest import requires_google_key
 
 
@@ -54,10 +54,11 @@ def test_scout_run_against_gemini(tmp_path, monkeypatch):
     st = read_state("smoke", tmp_path / "state")
     assert st is not None and st.last_status == "ok"
 
-    jsonl_files = list((tmp_path / "logs" / "smoke").glob("*.jsonl"))
-    assert len(jsonl_files) == 1
-    events = [json.loads(line) for line in jsonl_files[0].read_text().splitlines()]
-    names = [e["event"] for e in events]
-    assert "run_start" in names
-    assert "llm_turn" in names
-    assert "run_end" in names
+    traj_files = list((tmp_path / "trajectories" / "smoke").glob("*.jsonl"))
+    assert len(traj_files) == 1
+    recs = read_trajectory(traj_files[0])
+    types = [r["type"] for r in recs]
+    assert types[0] == "run"          # worker wrote the header
+    assert "message" in types
+    assert "artifact" in types
+    assert types[-1] == "result" and recs[-1]["status"] == "ok"

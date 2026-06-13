@@ -1,16 +1,44 @@
 from __future__ import annotations
 
 import logging
+import socket
 from datetime import datetime, timezone
+from pathlib import Path
 
-from scout.config import load_global_config, load_topic
+from scout.config import LoadedTopic, load_global_config, load_topic
 from scout.paths import DataPaths
-from scout.runlog import RunLog
 from scout.runner import Limits, Paths, make_runner
 from scout.scheduler import is_due
 from scout.state import TopicState, acquire_lock, read_state, write_state_atomic
+from scout.trajectory import TrajectoryWriter, provider_of
 
 log = logging.getLogger("scout.worker")
+
+
+def _scout_version() -> str:
+    try:
+        from importlib.metadata import version
+
+        return version("scout")
+    except Exception:
+        return "unknown"
+
+
+def _config_snapshot(loaded: LoadedTopic, timeout: float) -> dict:
+    cfg = loaded.config
+    return {
+        "cadence": cfg.cadence,
+        "runner": cfg.runner,
+        "model": cfg.model,
+        "effort": cfg.effort,
+        "sources": [s.model_dump(mode="json") for s in cfg.sources],
+        "tools": cfg.tools,
+        "limits": {"timeout_seconds": timeout},
+        "prompt": {
+            "template": cfg.prompt.template,
+            "inline": cfg.prompt.inline is not None,
+        },
+    }
 
 
 def run_topic(
@@ -44,23 +72,48 @@ def run_topic(
             if loaded.config.limits and loaded.config.limits.timeout_seconds
             else global_cfg.defaults.timeout_seconds
         )
-        try:
-            with RunLog(slug, data.logs_dir, now=now) as rl:
+        with TrajectoryWriter(slug, data.trajectories_dir, now=now) as tw:
+            tw.header(
+                topic=slug,
+                title=loaded.config.title,
+                runner=runner_name,
+                runner_version=None,
+                scout_version=_scout_version(),
+                provider=provider_of(loaded.config.model, runner_name),
+                model=loaded.config.model or "unknown",
+                effort=loaded.config.effort,
+                trigger="manual" if force else "schedule",
+                run_window={
+                    "since": prev_success.isoformat() if prev_success else None,
+                    "until": now.isoformat(),
+                },
+                config=_config_snapshot(loaded, timeout),
+                host={"hostname": socket.gethostname(), "cwd": str(Path.cwd())},
+            )
+            try:
                 result = runner.execute(
                     loaded,
-                    Paths(output_dir=data.output_dir, logs_dir=data.logs_dir),
+                    Paths(
+                        output_dir=data.output_dir,
+                        trajectories_dir=data.trajectories_dir,
+                    ),
                     Limits(timeout_seconds=timeout),
-                    run_log=rl, now=now,
+                    traj=tw, now=now,
                     last_run=prev_success,
                 )
-        except Exception as e:
-            log.exception("runner crashed")
-            write_state_atomic(slug, data.state_dir, TopicState(
-                last_run=now, last_status="failed",
-                last_error=f"runner_crashed: {e}", last_duration_seconds=0.0,
-                last_success_run=prev_success,
-            ))
-            return 1
+            except Exception as e:
+                log.exception("runner crashed")
+                tw.result(
+                    status="failed", duration_seconds=0.0,
+                    reason=f"runner_crashed: {e}",
+                    error={"type": type(e).__name__, "message": str(e)},
+                )
+                write_state_atomic(slug, data.state_dir, TopicState(
+                    last_run=now, last_status="failed",
+                    last_error=f"runner_crashed: {e}", last_duration_seconds=0.0,
+                    last_success_run=prev_success,
+                ))
+                return 1
 
         write_state_atomic(slug, data.state_dir, TopicState(
             last_run=now,

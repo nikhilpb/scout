@@ -1,0 +1,86 @@
+{% extends "traj_base.html" %}
+{% block title %}{{ summary.title or summary.slug }} — {{ summary.run_id }}{% endblock %}
+{% block body %}
+  <nav class="crumbs">
+    <a href="/">all topics</a> ·
+    <a href="/t/{{ summary.slug }}">{{ summary.title or summary.slug }}</a>
+  </nav>
+  <h1>{{ summary.title or summary.slug }}</h1>
+  <p class="muted">
+    run <code>{{ summary.run_id }}</code> · {{ summary.pretty_started }} ·
+    {{ summary.runner }} · {{ summary.model }}
+    <span class="pill {{ summary.status }}">{{ summary.status }}</span>
+    {% if summary.reason %}<span class="muted">— {{ summary.reason }}</span>{% endif %}
+  </p>
+
+  <div class="meta-grid">
+    <div class="cell"><div class="k">Duration</div><div class="v">{% if summary.duration_seconds is not none %}{{ "%.1f"|format(summary.duration_seconds) }}s{% else %}—{% endif %}</div></div>
+    <div class="cell"><div class="k">Cost</div><div class="v">{% if summary.cost_usd is not none %}${{ "%.4f"|format(summary.cost_usd) }}{% else %}—{% endif %}</div></div>
+    <div class="cell"><div class="k">Input tokens</div><div class="v">{{ summary.input_tokens if summary.input_tokens is not none else "—" }}</div></div>
+    <div class="cell"><div class="k">Output tokens</div><div class="v">{{ summary.output_tokens if summary.output_tokens is not none else "—" }}</div></div>
+    <div class="cell"><div class="k">Turns</div><div class="v">{{ summary.num_turns if summary.num_turns is not none else "—" }}</div></div>
+    <div class="cell"><div class="k">Tool calls</div><div class="v">{{ summary.tool_calls.values()|sum if summary.tool_calls else 0 }}</div></div>
+  </div>
+
+  {% if summary.tool_calls %}
+  <p class="muted">Tools: {% for name, n in summary.tool_calls.items() %}<code>{{ name }}</code>×{{ n }}{% if not loop.last %}, {% endif %}{% endfor %}</p>
+  {% endif %}
+
+  <h2>Timeline</h2>
+  {% for rec in doc.records %}
+    {% if rec.type == "message" %}
+      <div class="rec t-message role-{{ rec.role }}">
+        <div class="rhead"><span class="rtype">{{ rec.role }}</span>
+          {% if rec.model %}<span class="rtag">{{ rec.model }}</span>{% endif %}
+          {% if rec.stop_reason %}<span class="rtag">{{ rec.stop_reason }}</span>{% endif %}
+        </div>
+        {% if rec.content is string %}
+          <pre>{{ rec.content }}</pre>
+        {% else %}
+          {% for part in rec.content %}
+            {% if part.type == "text" %}<pre>{{ part.text }}</pre>
+            {% elif part.type == "reasoning" %}<pre class="reasoning">{{ part.text }}</pre>
+            {% elif part.type == "tool_use" %}<div class="rtag">→ calls <code>{{ part.name }}</code></div>
+            {% elif part.type == "tool_result" %}<div class="rtag">↳ result for <code>{{ part.call_id }}</code></div>
+            {% elif part.type == "media" %}<div class="rtag">[{{ part.media_type }}]</div>
+            {% endif %}
+          {% endfor %}
+        {% endif %}
+      </div>
+    {% elif rec.type == "tool_call" %}
+      <div class="rec t-tool_call">
+        <div class="rhead"><span class="rtype">tool_call</span>
+          <span class="rtag"><code>{{ rec.name }}</code>{% if rec.kind %} · {{ rec.kind }}{% endif %}</span>
+        </div>
+        <pre>{{ rec.arguments | pretty_json }}</pre>
+      </div>
+    {% elif rec.type == "tool_result" %}
+      <div class="rec t-tool_result {% if rec.status != 'ok' %}err{% endif %}">
+        <div class="rhead"><span class="rtype">tool_result</span>
+          <span class="rtag">{{ rec.status }}{% if rec.get('duration_ms') is not none %} · {{ rec.duration_ms }}ms{% endif %}</span>
+        </div>
+        {% if rec.sources %}
+          <div class="sources">{% for s in rec.sources %}<a href="{{ s.url }}" rel="noopener">{{ s.title or s.url }}</a>{% endfor %}</div>
+        {% endif %}
+        <pre>{{ rec.result | pretty_json(1500) }}</pre>
+      </div>
+    {% elif rec.type == "artifact" %}
+      <div class="rec t-artifact">
+        <div class="rhead"><span class="rtype">artifact</span>
+          <span class="rtag">{{ rec.kind }}{% if rec.bytes %} · {{ rec.bytes }} bytes{% endif %}</span>
+        </div>
+        <div><code>{{ rec.path }}</code>{% if rec.summary %} — {{ rec.summary }}{% endif %}</div>
+      </div>
+    {% elif rec.type == "result" %}
+      <div class="rec t-result">
+        <div class="rhead"><span class="rtype">result</span>
+          <span class="rtag"><span class="pill {{ rec.status }}">{{ rec.status }}</span>{% if rec.reason %} {{ rec.reason }}{% endif %}</span>
+        </div>
+        <pre>{{ rec.usage | pretty_json }}</pre>
+      </div>
+    {% endif %}
+  {% endfor %}
+
+  <h2>Config</h2>
+  <pre>{{ doc.header.get("config") | pretty_json }}</pre>
+{% endblock %}

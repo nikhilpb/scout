@@ -1,18 +1,18 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, Optional, Protocol
 
 from scout.config import LoadedTopic
-from scout.runlog import RunLog
+from scout.trajectory import TrajectoryWriter
 
 
 @dataclass(frozen=True)
 class Paths:
     output_dir: Path
-    logs_dir: Path
+    trajectories_dir: Path
 
 
 @dataclass(frozen=True)
@@ -27,6 +27,12 @@ class RunResult:
     output_path: Optional[Path]
     duration_seconds: float
     summary: dict
+    # Rich metrics for the trajectory `result` record. Defaulted so existing
+    # positional ``RunResult(status, reason, path, duration, summary)`` callers
+    # (and test stubs) keep working unchanged.
+    usage: dict = field(default_factory=dict)
+    num_turns: Optional[int] = None
+    permission_denials: list = field(default_factory=list)
 
 
 class Runner(Protocol):
@@ -36,7 +42,7 @@ class Runner(Protocol):
         paths: Paths,
         limits: Limits,
         *,
-        run_log: RunLog,
+        traj: TrajectoryWriter,
         now: datetime,
         last_run: Optional[datetime] = None,
     ) -> RunResult: ...

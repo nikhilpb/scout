@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Scout Trajectories{% endblock %}</title>
+  <style>
+    :root {
+      --bg: #0f1115; --panel: #171a21; --panel2: #1f2430; --fg: #e6e9ef;
+      --muted: #9aa4b2; --line: #2a3140; --accent: #6ea8fe;
+      --ok: #4ade80; --fail: #f87171; --warn: #fbbf24;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--fg);
+      font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    header.top {
+      position: sticky; top: 0; background: var(--panel); border-bottom: 1px solid var(--line);
+      padding: 12px 20px; display: flex; gap: 16px; align-items: baseline;
+    }
+    header.top .brand { font-weight: 700; }
+    main { max-width: 1000px; margin: 0 auto; padding: 20px; }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    h2 { font-size: 15px; margin: 24px 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+    .muted { color: var(--muted); }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+    .pill.ok { background: rgba(74,222,128,.15); color: var(--ok); }
+    .pill.failed { background: rgba(248,113,113,.15); color: var(--fail); }
+    .pill.running { background: rgba(251,191,36,.15); color: var(--warn); }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    pre {
+      background: var(--panel2); border: 1px solid var(--line); border-radius: 8px;
+      padding: 10px 12px; overflow-x: auto; margin: 6px 0 0; white-space: pre-wrap; word-break: break-word;
+    }
+    .meta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 12px 0; }
+    .meta-grid .cell { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+    .meta-grid .cell .k { color: var(--muted); font-size: 12px; }
+    .meta-grid .cell .v { font-size: 16px; font-variant-numeric: tabular-nums; }
+    .rec { border: 1px solid var(--line); border-left: 3px solid var(--line); border-radius: 8px;
+           background: var(--panel); padding: 10px 14px; margin: 10px 0; }
+    .rec .rhead { display: flex; gap: 10px; align-items: baseline; }
+    .rec .rtype { font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+    .rec .rtag { color: var(--muted); font-size: 12px; }
+    .rec.role-system { border-left-color: #6b7280; }
+    .rec.role-user { border-left-color: #38bdf8; }
+    .rec.role-assistant { border-left-color: var(--accent); }
+    .rec.t-tool_call { border-left-color: #c084fc; }
+    .rec.t-tool_result { border-left-color: #34d399; }
+    .rec.t-tool_result.err { border-left-color: var(--fail); }
+    .rec.t-artifact { border-left-color: var(--warn); }
+    .rec.t-result { border-left-color: var(--ok); }
+    .reasoning { color: var(--muted); font-style: italic; }
+    .sources a { display: block; }
+    nav.crumbs { margin-bottom: 12px; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <span class="brand"><a href="/">Scout Trajectories</a></span>
+    <span class="muted">agent run dashboard</span>
+  </header>
+  <main>{% block body %}{% endblock %}</main>
+</body>
+</html>

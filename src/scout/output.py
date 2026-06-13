@@ -35,6 +35,15 @@ def compose_digest(rec: DigestRecord, body: str) -> str:
     return f"---\n{fm}\n---\n\n{body}"
 
 
+def first_heading(body: str) -> Union[str, None]:
+    """The first markdown H1 in a digest body, used as a trajectory artifact summary."""
+    for line in body.splitlines():
+        line = line.strip()
+        if line.startswith("# "):
+            return line[2:].strip()
+    return None
+
+
 def pick_output_path(slug: str, output_dir: Path, now: datetime) -> Path:
     date_str = now.strftime("%Y-%m-%d")
     topic_dir = output_dir / slug
