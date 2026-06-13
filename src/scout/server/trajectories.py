@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Optional
 
 from scout.paths import DataPaths
+from scout.trajectory import read_records
 
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 # A run id is a ULID (26 Crockford chars); allow the broader set so hand-made or
@@ -61,19 +62,31 @@ class TopicRuns:
         return self.runs[0] if self.runs else None
 
 
-def _parse_file(path: Path) -> list[dict]:
-    records = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
+def _summary_records(path: Path) -> list[dict]:
+    """Just the `run` header + terminal `result` — for cheap list views.
+
+    Parses only the first line and the last `result` line instead of the whole
+    transcript, so the index/topic pages don't pay to JSON-decode every message
+    and (possibly large) tool result of every run.
+    """
+    lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    out: list[dict] = []
+    if lines:
         try:
-            rec = json.loads(line)
+            head = json.loads(lines[0])
+            if isinstance(head, dict):
+                out.append(head)
         except json.JSONDecodeError:
-            continue
-        if isinstance(rec, dict):
-            records.append(rec)
-    return records
+            pass
+        for ln in reversed(lines):
+            try:
+                rec = json.loads(ln)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(rec, dict) and rec.get("type") == "result":
+                out.append(rec)
+                break
+    return out
 
 
 def _pretty_ts(iso: str) -> str:
@@ -89,8 +102,12 @@ def _pretty_ts(iso: str) -> str:
 def _summary_from(slug: str, run_id: str, records: list[dict]) -> RunSummary:
     header = next((r for r in records if r.get("type") == "run"), {})
     result = next((r for r in records if r.get("type") == "result"), None)
-    usage = (result or {}).get("usage") or {}
+    usage = (result or {}).get("usage")
+    usage = usage if isinstance(usage, dict) else {}
+    # Coerce to a string so a malformed numeric `ts` can't break sorting/formatting.
     started = header.get("ts", "")
+    started = started if isinstance(started, str) else str(started)
+    tool_calls = (result or {}).get("tool_calls")
     return RunSummary(
         slug=slug,
         run_id=run_id,
@@ -105,7 +122,7 @@ def _summary_from(slug: str, run_id: str, records: list[dict]) -> RunSummary:
         input_tokens=usage.get("input_tokens"),
         output_tokens=usage.get("output_tokens"),
         num_turns=(result or {}).get("num_turns"),
-        tool_calls=(result or {}).get("tool_calls") or {},
+        tool_calls=tool_calls if isinstance(tool_calls, dict) else {},
         title=header.get("title"),
     )
 
@@ -125,7 +142,7 @@ def list_runs(data: DataPaths, slug: str) -> list[RunSummary]:
     for p in topic_dir.glob("*.jsonl"):
         if not p.is_file():
             continue
-        summaries.append(_summary_from(slug, p.stem, _parse_file(p)))
+        summaries.append(_summary_from(slug, p.stem, _summary_records(p)))
     # ULID run ids sort lexicographically by time; newest first.
     return sorted(summaries, key=lambda s: s.run_id, reverse=True)
 
@@ -171,7 +188,7 @@ def load_trajectory(data: DataPaths, slug: str, run_id: str) -> Optional[Traject
         return None
     if topic_root not in resolved.parents or not path.is_file():
         return None
-    records = _parse_file(path)
+    records = read_records(path)
     if not records:
         return None
     header = next((r for r in records if r.get("type") == "run"), {})

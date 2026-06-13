@@ -1,25 +1,36 @@
 from __future__ import annotations
 
-import json
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 from scout.paths import DataPaths
+from scout.trajectory import read_records
+
+
+def _parse_ts(value) -> datetime | None:
+    """Parse a record `ts` into an aware UTC datetime; None if unparseable.
+
+    A naive timestamp (no offset) is assumed UTC, so it can be compared against
+    the aware cutoff without raising.
+    """
+    if not isinstance(value, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
 
 
 def _run_time(records: list[dict]) -> datetime | None:
     """The run's start time, from the `run` header's ts (fallback: any ts)."""
     for rec in records:
         if rec.get("type") == "run":
-            try:
-                return datetime.fromisoformat(rec["ts"])
-            except (KeyError, ValueError):
-                return None
+            return _parse_ts(rec.get("ts"))
     for rec in records:
-        try:
-            return datetime.fromisoformat(rec["ts"])
-        except (KeyError, ValueError):
-            continue
+        ts = _parse_ts(rec.get("ts"))
+        if ts is not None:
+            return ts
     return None
 
 
@@ -36,12 +47,7 @@ def doctor(data: DataPaths) -> int:
         if not topic_dir.is_dir():
             continue
         for f in sorted(topic_dir.glob("*.jsonl")):
-            records = []
-            for line in f.read_text().splitlines():
-                try:
-                    records.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
+            records = read_records(f)
             ts = _run_time(records)
             if ts is None or ts < cutoff:
                 continue

@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 
 import pytest
@@ -106,3 +107,28 @@ def test_api_json(env):
 def test_healthz(env):
     _, _, client = env
     assert client.get("/healthz").json() == {"ok": True}
+
+
+def test_dashboard_tolerates_malformed_records(tmp_path):
+    """Malformed/corrupt trajectory lines must degrade, not 500 the pages."""
+    data = make_data_paths(tmp_path)
+    d = data.trajectories_dir / "weird"
+    d.mkdir(parents=True)
+    rid = "01HXWEIRDMALFORMED00000000"
+    (d / f"{rid}.jsonl").write_text("\n".join([
+        json.dumps({"type": "run", "id": "r", "parent_id": None, "ts": 12345,
+                    "seq": 0, "schema": "scout.trajectory/1", "run_id": "r",
+                    "topic": "weird", "runner": "builtin", "model": "m", "title": "Weird"}),
+        json.dumps({"type": "message", "id": "m", "parent_id": "r", "ts": "x",
+                    "seq": 1, "role": "assistant", "content": 42}),  # non-iterable content
+        "null",                                                       # not an object
+        json.dumps({"type": "result", "id": "x", "parent_id": "r", "ts": "x",
+                    "seq": 2, "status": "ok", "duration_seconds": 1.0,
+                    "usage": "nope", "tool_calls": "oops"}),          # wrong-typed fields
+    ]) + "\n")
+    client = TestClient(create_trajectory_app(data))
+    # numeric `ts` must not break the index sort across topics
+    assert client.get("/").status_code == 200
+    assert client.get("/t/weird").status_code == 200
+    # int content + mistyped usage/tool_calls must not 500 the detail page
+    assert client.get(f"/r/weird/{rid}").status_code == 200

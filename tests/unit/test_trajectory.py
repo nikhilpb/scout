@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 
 from scout.trajectory import TrajectoryWriter, new_ulid, provider_of
@@ -60,6 +61,34 @@ def test_writer_emits_schema_valid_records(tmp_path):
     res = recs[-1]
     assert res["usage"]["input_tokens"] == 5
     assert res["tool_calls"] == {"web_search": 1}
+
+
+def test_large_tool_result_offloaded_to_blob(tmp_path):
+    """Tool results over the inline limit go to the *.blobs/ sidecar (schema §3)."""
+    now = datetime(2026, 6, 13, tzinfo=timezone.utc)
+    big = "x" * 20000
+    with TrajectoryWriter("ai", tmp_path, now=now) as tw:
+        tw.header(topic="ai", runner="builtin", model="m")
+        tw.tool_result(call_id="big", status="ok", result={"content": big})
+        tw.tool_result(call_id="small", status="ok", result={"content": "tiny"})
+        tw.result(status="ok", duration_seconds=1.0)
+
+    recs = read_trajectory(tw.path)
+    big_tr = next(r for r in recs if r["type"] == "tool_result" and r["call_id"] == "big")
+    small_tr = next(r for r in recs if r["type"] == "tool_result" and r["call_id"] == "small")
+    # the large result is replaced by a small stub + a blob_ref into the sidecar
+    assert big_tr["result"]["truncated"] is True
+    assert big_tr["result"]["bytes"] > 8192
+    ref = big_tr["blob_ref"]
+    assert ref.startswith(f"{tw.run_id}.blobs/")
+    blob = tw.path.parent / ref
+    assert blob.is_file()
+    assert json.loads(blob.read_text())["content"] == big
+    # the JSONL line itself stays small
+    assert len((tw.path.read_text().splitlines()[2]).encode()) < 1000
+    # small results stay inline with no blob_ref
+    assert small_tr["result"] == {"content": "tiny"}
+    assert "blob_ref" not in small_tr
 
 
 def test_partial_trajectory_without_result_is_valid(tmp_path):

@@ -36,7 +36,7 @@
         </div>
         {% if rec.content is string %}
           <pre>{{ rec.content }}</pre>
-        {% else %}
+        {% elif rec.content is iterable %}
           {% for part in rec.content %}
             {% if part.type == "text" %}<pre>{{ part.text }}</pre>
             {% elif part.type == "reasoning" %}<pre class="reasoning">{{ part.text }}</pre>
@@ -60,8 +60,9 @@
           <span class="rtag">{{ rec.status }}{% if rec.get('duration_ms') is not none %} · {{ rec.duration_ms }}ms{% endif %}</span>
         </div>
         {% if rec.sources %}
-          <div class="sources">{% for s in rec.sources %}<a href="{{ s.url }}" rel="noopener">{{ s.title or s.url }}</a>{% endfor %}</div>
+          <div class="sources">{% for s in rec.sources %}{% if s.url is string and (s.url.startswith('http://') or s.url.startswith('https://')) %}<a href="{{ s.url }}" rel="noopener noreferrer">{{ s.title or s.url }}</a>{% else %}<span>{{ s.title or s.url }}</span>{% endif %}{% endfor %}</div>
         {% endif %}
+        {% if rec.blob_ref %}<div class="rtag">full payload → <code>{{ rec.blob_ref }}</code></div>{% endif %}
         <pre>{{ rec.result | pretty_json(1500) }}</pre>
       </div>
     {% elif rec.type == "artifact" %}

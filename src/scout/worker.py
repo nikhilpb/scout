@@ -114,6 +114,19 @@ def run_topic(
                     last_success_run=prev_success,
                 ))
                 return 1
+            # Guarantee a terminal result record from the returned RunResult, so a
+            # runner that returned without writing one never leaves a trajectory
+            # looking "running" in the dashboard or silently dropped by doctor.
+            if not tw.has_result:
+                tw.result(
+                    status=result.status,
+                    reason=result.reason if result.status != "ok" else None,
+                    duration_seconds=result.duration_seconds,
+                    usage=result.usage or None,
+                    tool_calls=(result.summary or {}).get("tool_calls"),
+                    num_turns=result.num_turns,
+                    permission_denials=result.permission_denials or None,
+                )
 
         write_state_atomic(slug, data.state_dir, TopicState(
             last_run=now,

@@ -8,7 +8,7 @@ from typing import Optional
 
 from scout.config import LoadedTopic
 from scout.output import DigestRecord, compose_digest, first_heading
-from scout.runner import Limits, Paths, RunResult, apply_time_window
+from scout.runner import Limits, Paths, RunResult, apply_time_window, subprocess_error
 from scout.trajectory import TrajectoryWriter
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "prompts"
@@ -35,9 +35,10 @@ class CodexRunner:
                 capture_output=True, text=True,
                 timeout=limits.timeout_seconds,
             )
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
             duration = time.monotonic() - start
-            traj.result(status="failed", reason="timeout", duration_seconds=duration)
+            traj.result(status="failed", reason="timeout", duration_seconds=duration,
+                        error=subprocess_error("timeout", None, self._as_text(exc.stderr)))
             return RunResult("failed", "timeout", None, duration, {})
         duration = time.monotonic() - start
         # The codex CLI exposes no structured stream, so the trajectory carries the
@@ -47,7 +48,8 @@ class CodexRunner:
 
         out_path = paths.output_dir / topic.slug / f"{now.strftime('%Y-%m-%d')}.md"
         if not out_path.exists():
-            traj.result(status="failed", reason="no_digest", duration_seconds=duration)
+            traj.result(status="failed", reason="no_digest", duration_seconds=duration,
+                        error=subprocess_error("no_digest", proc.returncode, proc.stderr))
             return RunResult("failed", "no_digest", None, duration, {})
 
         body = out_path.read_text()
@@ -59,18 +61,19 @@ class CodexRunner:
         )
         composed = compose_digest(rec, body)
         out_path.write_text(composed)
-        rel = self._rel(out_path, paths)
+        rel = paths.rel(out_path)
         traj.artifact(kind="digest", path=rel, media_type="text/markdown",
                       size_bytes=len(composed.encode("utf-8")), summary=first_heading(body))
         traj.result(status="ok", duration_seconds=duration, artifacts=[rel])
         return RunResult("ok", None, out_path, duration, {})
 
     @staticmethod
-    def _rel(path: Path, paths: Paths) -> str:
-        try:
-            return str(path.relative_to(paths.output_dir.parent))
-        except ValueError:
-            return str(path)
+    def _as_text(value) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, bytes):
+            return value.decode("utf-8", "replace")
+        return value
 
     def _build_prompt(
         self,

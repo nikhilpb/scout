@@ -239,6 +239,38 @@ def test_claude_code_runner_timeout_salvages_partial(tmp_path, monkeypatch):
 
 
 @pytest.mark.integration
+def test_claude_code_runner_records_stderr_on_failure(tmp_path, monkeypatch):
+    # CLI fails (no result event, nonzero exit) and writes a diagnostic to stderr.
+    bindir = tmp_path / "bin"
+    bindir.mkdir(parents=True)
+    now = datetime(2026, 5, 20, 7, tzinfo=timezone.utc)
+    script = bindir / "claude"
+    script.write_text("#!/bin/sh\nprintf 'boom on stderr\\n' 1>&2\nexit 1\n")
+    script.chmod(script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    monkeypatch.setenv("PATH", f"{bindir}:{os.environ['PATH']}")
+    topic = LoadedTopic(
+        slug="ai", path=Path("topics/ai.yaml"),
+        config=TopicConfig(
+            title="AI", description="AI research.",
+            cadence="0 7 * * *", runner="claude-code", model="claude-sonnet-4-6",
+            prompt={"template": "briefing"},
+        ),
+    )
+    runner = make_runner("claude-code")
+    with TrajectoryWriter("ai", tmp_path / "trajectories", now=now) as tw:
+        result = runner.execute(
+            topic, _paths(tmp_path), Limits(timeout_seconds=10), traj=tw, now=now,
+        )
+    assert result.status == "failed"
+    assert result.reason == "exit_1"
+    # the failure carries the CLI's stderr so it is debuggable from the trajectory
+    res = read_trajectory(tw.path)[-1]
+    assert res["type"] == "result" and res["status"] == "failed"
+    assert "boom on stderr" in res["error"]["stderr"]
+    assert res["error"]["returncode"] == 1
+
+
+@pytest.mark.integration
 def test_claude_code_runner_keeps_digest_on_benign_nonzero_exit(tmp_path, monkeypatch):
     # CLI writes the digest and reports success in the result event, but the
     # process exits non-zero (e.g. a benign post-run warning). The digest must

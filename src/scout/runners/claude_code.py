@@ -11,7 +11,7 @@ from typing import Optional
 
 from scout.config import LoadedTopic
 from scout.output import DigestRecord, compose_digest, first_heading
-from scout.runner import Limits, Paths, RunResult, apply_time_window
+from scout.runner import Limits, Paths, RunResult, apply_time_window, subprocess_error
 from scout.trajectory import TrajectoryWriter
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "prompts"
@@ -88,7 +88,8 @@ class ClaudeCodeRunner:
             metrics = self._parse_stream(partial)
             self._emit_records(traj, partial)
             self._note(traj, metrics)
-            return self._fail(traj, "timeout", duration, metrics=metrics)
+            return self._fail(traj, "timeout", duration, metrics=metrics,
+                              stderr=self._as_text(exc.stderr))
         duration = time.monotonic() - start
 
         metrics = self._parse_stream(proc.stdout)
@@ -106,13 +107,16 @@ class ClaudeCodeRunner:
         # to the exit code when there is no result event to trust.
         if metrics["is_error"]:
             reason = metrics["error_subtype"] or "cli_error"
-            return self._fail(traj, reason, duration, metrics=metrics)
+            return self._fail(traj, reason, duration, metrics=metrics,
+                              stderr=proc.stderr, returncode=proc.returncode)
         if metrics["result"] is None and proc.returncode != 0:
-            return self._fail(traj, f"exit_{proc.returncode}", duration, metrics=metrics)
+            return self._fail(traj, f"exit_{proc.returncode}", duration, metrics=metrics,
+                              stderr=proc.stderr, returncode=proc.returncode)
 
         out_path = paths.output_dir / topic.slug / f"{now.strftime('%Y-%m-%d')}.md"
         if not out_path.exists():
-            return self._fail(traj, "no_digest", duration, metrics=metrics)
+            return self._fail(traj, "no_digest", duration, metrics=metrics,
+                              stderr=proc.stderr, returncode=proc.returncode)
 
         body = out_path.read_text()
         resolved_model = metrics["model"] or model or UNKNOWN
@@ -138,7 +142,7 @@ class ClaudeCodeRunner:
         )
         composed = compose_digest(rec, body)
         out_path.write_text(composed)
-        rel = self._rel(out_path, paths)
+        rel = paths.rel(out_path)
         usage = self._rich_usage(metrics)
         traj.artifact(
             kind="digest", path=rel, media_type="text/markdown",
@@ -157,13 +161,6 @@ class ClaudeCodeRunner:
             usage=usage, num_turns=metrics["num_turns"],
             permission_denials=metrics["permission_denials"] or [],
         )
-
-    @staticmethod
-    def _rel(path: Path, paths: Paths) -> str:
-        try:
-            return str(path.relative_to(paths.output_dir.parent))
-        except ValueError:
-            return str(path)
 
     @staticmethod
     def _note(traj: TrajectoryWriter, metrics: dict) -> None:
@@ -325,6 +322,8 @@ class ClaudeCodeRunner:
         duration: float,
         *,
         metrics: Optional[dict] = None,
+        stderr: Optional[str] = None,
+        returncode: Optional[int] = None,
     ) -> RunResult:
         usage = self._rich_usage(metrics) if metrics else None
         num_turns = metrics.get("num_turns") if metrics else None
@@ -332,6 +331,7 @@ class ClaudeCodeRunner:
         traj.result(
             status="failed", reason=reason, duration_seconds=duration,
             usage=usage, num_turns=num_turns, permission_denials=denials,
+            error=subprocess_error(reason, returncode, stderr),
         )
         return RunResult(
             "failed", reason, None, duration, traj.summary(),

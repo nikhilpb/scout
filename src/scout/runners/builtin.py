@@ -83,9 +83,10 @@ class BuiltinRunner:
         )
         composed = compose_digest(rec, body)
         out_path.write_text(composed)
+        rel = paths.rel(out_path)
         traj.artifact(
             kind="digest",
-            path=self._rel(out_path, paths),
+            path=rel,
             media_type="text/markdown",
             size_bytes=len(composed.encode("utf-8")),
             sha256=hashlib.sha256(composed.encode("utf-8")).hexdigest(),
@@ -93,7 +94,7 @@ class BuiltinRunner:
         )
         traj.result(
             status="ok", duration_seconds=duration, num_turns=result.turns,
-            artifacts=[self._rel(out_path, paths)],
+            artifacts=[rel],
         )
         return RunResult(
             status="ok",
@@ -104,13 +105,6 @@ class BuiltinRunner:
             usage=traj.usage_summary(),
             num_turns=result.turns,
         )
-
-    @staticmethod
-    def _rel(path: Path, paths: Paths) -> str:
-        try:
-            return str(path.relative_to(paths.output_dir.parent))
-        except ValueError:
-            return str(path)
 
     def _allowed_tools(self, cfg) -> list[str]:
         reg = registry()
