@@ -1,0 +1,240 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scout.local/schemas/trajectory/1",
+  "title": "Scout Agent Trajectory record",
+  "description": "One line of a trajectories/<slug>/<run-id>.jsonl file. Each line is one record; `type` discriminates the body. See docs/trajectory-schema.md.",
+  "type": "object",
+  "required": ["type", "id", "parent_id", "ts", "seq"],
+  "properties": {
+    "type": {
+      "enum": ["run", "message", "tool_call", "tool_result", "artifact", "feedback", "result"]
+    },
+    "id": { "type": "string", "description": "Unique record id (UUID or ULID)." },
+    "parent_id": { "type": ["string", "null"], "description": "Parent record id; null for the run header." },
+    "ts": { "type": "string", "format": "date-time" },
+    "seq": { "type": "integer", "minimum": 0 }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/run" },
+    { "$ref": "#/$defs/message" },
+    { "$ref": "#/$defs/tool_call" },
+    { "$ref": "#/$defs/tool_result" },
+    { "$ref": "#/$defs/artifact" },
+    { "$ref": "#/$defs/feedback" },
+    { "$ref": "#/$defs/result" }
+  ],
+  "$defs": {
+    "usage": {
+      "type": "object",
+      "description": "Token usage; superset of OTel gen_ai.usage.* and Claude Code modelUsage.",
+      "properties": {
+        "input_tokens": { "type": "integer" },
+        "output_tokens": { "type": "integer" },
+        "cache_read_input_tokens": { "type": "integer" },
+        "cache_creation_input_tokens": { "type": "integer" },
+        "total_tokens": { "type": "integer" },
+        "cost_usd": { "type": "number" },
+        "by_model": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "input_tokens": { "type": "integer" },
+              "output_tokens": { "type": "integer" },
+              "cache_read_input_tokens": { "type": "integer" },
+              "cache_creation_input_tokens": { "type": "integer" },
+              "cost_usd": { "type": "number" }
+            }
+          }
+        }
+      }
+    },
+    "content_part": {
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "enum": ["text", "reasoning", "tool_use", "tool_result", "media"] } },
+      "oneOf": [
+        {
+          "properties": {
+            "type": { "const": "text" },
+            "text": { "type": "string" }
+          },
+          "required": ["text"]
+        },
+        {
+          "properties": {
+            "type": { "const": "reasoning" },
+            "text": { "type": "string" }
+          },
+          "required": ["text"]
+        },
+        {
+          "properties": {
+            "type": { "const": "tool_use" },
+            "call_id": { "type": "string" },
+            "name": { "type": "string" },
+            "input": { "type": "object" }
+          },
+          "required": ["call_id", "name", "input"]
+        },
+        {
+          "properties": {
+            "type": { "const": "tool_result" },
+            "call_id": { "type": "string" },
+            "status": { "enum": ["ok", "error"] },
+            "content": {},
+            "blob_ref": { "type": ["string", "null"] }
+          },
+          "required": ["call_id", "status"]
+        },
+        {
+          "properties": {
+            "type": { "const": "media" },
+            "media_type": { "type": "string" },
+            "blob_ref": { "type": ["string", "null"] },
+            "url": { "type": ["string", "null"] }
+          },
+          "required": ["media_type"]
+        }
+      ]
+    },
+    "run": {
+      "properties": {
+        "type": { "const": "run" },
+        "schema": { "type": "string", "const": "scout.trajectory/1" },
+        "run_id": { "type": "string" },
+        "topic": { "type": "string" },
+        "title": { "type": "string" },
+        "runner": { "type": "string" },
+        "runner_version": { "type": "string" },
+        "scout_version": { "type": "string" },
+        "provider": { "type": "string" },
+        "model": { "type": "string" },
+        "effort": { "type": ["string", "null"] },
+        "trigger": { "enum": ["schedule", "manual", "backfill"] },
+        "run_window": {
+          "type": ["object", "null"],
+          "properties": {
+            "since": { "type": ["string", "null"], "format": "date-time" },
+            "until": { "type": ["string", "null"], "format": "date-time" }
+          }
+        },
+        "config": { "type": "object" },
+        "host": {
+          "type": "object",
+          "properties": {
+            "hostname": { "type": "string" },
+            "cwd": { "type": "string" },
+            "git_branch": { "type": "string" }
+          }
+        },
+        "parent_run_id": { "type": ["string", "null"] }
+      },
+      "required": ["schema", "run_id", "topic", "runner", "model"]
+    },
+    "message": {
+      "properties": {
+        "type": { "const": "message" },
+        "role": { "enum": ["system", "user", "assistant", "tool"] },
+        "content": {
+          "oneOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "$ref": "#/$defs/content_part" } }
+          ]
+        },
+        "model": { "type": ["string", "null"] },
+        "stop_reason": { "type": ["string", "null"] },
+        "usage": { "oneOf": [{ "$ref": "#/$defs/usage" }, { "type": "null" }] }
+      },
+      "required": ["role", "content"]
+    },
+    "tool_call": {
+      "properties": {
+        "type": { "const": "tool_call" },
+        "call_id": { "type": "string" },
+        "name": { "type": "string" },
+        "kind": { "type": ["string", "null"] },
+        "arguments": { "type": "object" },
+        "server": { "type": ["string", "null"] }
+      },
+      "required": ["call_id", "name", "arguments"]
+    },
+    "tool_result": {
+      "properties": {
+        "type": { "const": "tool_result" },
+        "call_id": { "type": "string" },
+        "status": { "enum": ["ok", "error"] },
+        "error": {
+          "type": ["object", "null"],
+          "properties": {
+            "type": { "type": "string" },
+            "message": { "type": "string" }
+          }
+        },
+        "duration_ms": { "type": ["integer", "null"] },
+        "result": { "type": "object" },
+        "blob_ref": { "type": ["string", "null"] },
+        "sources": {
+          "type": ["array", "null"],
+          "items": {
+            "type": "object",
+            "properties": {
+              "url": { "type": "string" },
+              "title": { "type": ["string", "null"] },
+              "status": { "type": ["integer", "string", "null"] },
+              "bytes": { "type": ["integer", "null"] },
+              "fetched_at": { "type": ["string", "null"], "format": "date-time" }
+            },
+            "required": ["url"]
+          }
+        }
+      },
+      "required": ["call_id", "status", "result"]
+    },
+    "artifact": {
+      "properties": {
+        "type": { "const": "artifact" },
+        "kind": { "enum": ["digest", "file", "note"] },
+        "path": { "type": "string" },
+        "media_type": { "type": "string" },
+        "bytes": { "type": "integer" },
+        "sha256": { "type": "string" },
+        "summary": { "type": ["string", "null"] }
+      },
+      "required": ["kind", "path", "media_type"]
+    },
+    "feedback": {
+      "properties": {
+        "type": { "const": "feedback" },
+        "target": { "type": "string", "description": "e.g. 'run' or 'artifact:<id>'." },
+        "rating": { "type": ["integer", "null"], "minimum": 1, "maximum": 5 },
+        "notes": { "type": ["string", "null"] },
+        "source": { "type": ["string", "null"] },
+        "by": { "type": ["string", "null"] }
+      },
+      "required": ["target"]
+    },
+    "result": {
+      "properties": {
+        "type": { "const": "result" },
+        "status": { "enum": ["ok", "failed", "timeout", "no_output"] },
+        "reason": { "type": ["string", "null"] },
+        "error": {
+          "type": ["object", "null"],
+          "properties": {
+            "type": { "type": "string" },
+            "message": { "type": "string" },
+            "trace_ref": { "type": ["string", "null"] }
+          }
+        },
+        "duration_seconds": { "type": "number" },
+        "usage": { "$ref": "#/$defs/usage" },
+        "tool_calls": { "type": "object", "additionalProperties": { "type": "integer" } },
+        "num_turns": { "type": ["integer", "null"] },
+        "permission_denials": { "type": "array" },
+        "artifacts": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["status", "duration_seconds", "usage", "tool_calls"]
+    }
+  }
+}
