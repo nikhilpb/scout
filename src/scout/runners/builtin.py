@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import time
 from datetime import datetime
 from pathlib import Path
@@ -10,9 +11,9 @@ from scout.agent.loop import run_loop
 from scout.agent.tools import registry
 from scout.agent.tools._types import RunContext
 from scout.config import LoadedTopic
-from scout.output import DigestRecord, compose_digest
-from scout.runlog import RunLog
+from scout.output import DigestRecord, compose_digest, first_heading
 from scout.runner import Limits, Paths, RunResult, apply_time_window
+from scout.trajectory import TrajectoryWriter
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "prompts"
 
@@ -28,7 +29,7 @@ class BuiltinRunner:
         paths: Paths,
         limits: Limits,
         *,
-        run_log: RunLog,
+        traj: TrajectoryWriter,
         now: datetime,
         last_run: Optional[datetime] = None,
     ) -> RunResult:
@@ -39,11 +40,9 @@ class BuiltinRunner:
         ctx = RunContext(
             slug=topic.slug,
             output_dir=paths.output_dir,
-            logs_dir=paths.logs_dir,
             now=now,
-            runlog=run_log,
+            traj=traj,
         )
-        run_log.event("run_start", slug=topic.slug, runner="builtin", model=cfg.model)
         start = time.monotonic()
         result = run_loop(
             client=client,
@@ -55,24 +54,23 @@ class BuiltinRunner:
             timeout_seconds=limits.timeout_seconds,
         )
         duration = time.monotonic() - start
-        run_log.event(
-            "run_end",
-            status=result.status,
-            reason=result.reason,
-            duration_seconds=duration,
-            **run_log.summary(),
-        )
+        summary = traj.summary()
         if result.status != "ok" or result.output_path is None:
+            traj.result(
+                status=result.status, reason=result.reason,
+                duration_seconds=duration, num_turns=result.turns,
+            )
             return RunResult(
                 status=result.status,
                 reason=result.reason,
                 output_path=None,
                 duration_seconds=duration,
-                summary=run_log.summary(),
+                summary=summary,
+                usage=traj.usage_summary(),
+                num_turns=result.turns,
             )
         out_path = Path(result.output_path)
         body = out_path.read_text()
-        summary = run_log.summary()
         rec = DigestRecord(
             topic=topic.slug,
             date=now.strftime("%Y-%m-%d"),
@@ -83,13 +81,29 @@ class BuiltinRunner:
             tokens=summary["tokens"],
             cost_usd=round(summary["cost_usd"], 4),
         )
-        out_path.write_text(compose_digest(rec, body))
+        composed = compose_digest(rec, body)
+        out_path.write_text(composed)
+        rel = paths.rel(out_path)
+        traj.artifact(
+            kind="digest",
+            path=rel,
+            media_type="text/markdown",
+            size_bytes=len(composed.encode("utf-8")),
+            sha256=hashlib.sha256(composed.encode("utf-8")).hexdigest(),
+            summary=first_heading(body),
+        )
+        traj.result(
+            status="ok", duration_seconds=duration, num_turns=result.turns,
+            artifacts=[rel],
+        )
         return RunResult(
             status="ok",
             reason=None,
             output_path=out_path,
             duration_seconds=duration,
             summary=summary,
+            usage=traj.usage_summary(),
+            num_turns=result.turns,
         )
 
     def _allowed_tools(self, cfg) -> list[str]:

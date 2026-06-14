@@ -3,7 +3,7 @@
 Scout lives in two repos:
 
 - **code repo** (this one) — the Python project. Versioned with code releases.
-- **data repo** — your topics, live `scout.toml`, generated digests, and per-machine state and logs. You bootstrap this once per machine and point scout at it via `$SCOUT_DATA_DIR` (or `--data-dir`).
+- **data repo** — your topics, live `scout.toml`, generated digests, committed per-run trajectories, and per-machine state and logs. You bootstrap this once per machine and point scout at it via `$SCOUT_DATA_DIR` (or `--data-dir`).
 
 ## First-time bootstrap
 

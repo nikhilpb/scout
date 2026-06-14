@@ -17,6 +17,7 @@ class DataPaths:
     output_dir: Path
     state_dir: Path
     logs_dir: Path
+    trajectories_dir: Path
     config_path: Path
 
     @classmethod
@@ -39,5 +40,6 @@ class DataPaths:
             output_dir=root / "output",
             state_dir=root / "state",
             logs_dir=root / "logs",
+            trajectories_dir=root / "trajectories",
             config_path=root / "scout.toml",
         )

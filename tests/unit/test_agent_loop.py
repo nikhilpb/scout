@@ -10,7 +10,7 @@ from tests.fakes.llm import FakeLLMClient
 
 def ctx_for(tmp_path: Path) -> RunContext:
     return RunContext(
-        slug="t", output_dir=tmp_path, logs_dir=tmp_path,
+        slug="t", output_dir=tmp_path,
         now=datetime(2026, 5, 20, 7, tzinfo=timezone.utc),
     )
 

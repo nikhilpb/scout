@@ -8,7 +8,6 @@ def test_write_digest_creates_file(tmp_path):
     ctx = RunContext(
         slug="ai-research",
         output_dir=tmp_path,
-        logs_dir=tmp_path,
         now=datetime(2026, 5, 20, 7, tzinfo=timezone.utc),
     )
     r = write_digest_handler(ctx, markdown_body="# Hello")

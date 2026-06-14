@@ -7,8 +7,9 @@ from pathlib import Path
 import pytest
 
 from scout.config import LoadedTopic, TopicConfig
-from scout.runlog import RunLog
 from scout.runner import Limits, Paths, make_runner
+from scout.trajectory import TrajectoryWriter
+from tests.conftest import read_trajectory
 
 
 def _install_fake_codex(bindir: Path, body_to_write: str, file_rel: str):
@@ -27,7 +28,7 @@ def _install_fake_codex(bindir: Path, body_to_write: str, file_rel: str):
 def test_codex_runner_invokes_cli(tmp_path, monkeypatch):
     bindir = tmp_path / "bin"
     out_dir = tmp_path / "output"
-    logs_dir = tmp_path / "logs"
+    traj_dir = tmp_path / "trajectories"
     now = datetime(2026, 5, 20, 7, tzinfo=timezone.utc)
     _install_fake_codex(bindir, body_to_write="# from-codex", file_rel="ai/2026-05-20.md")
 
@@ -41,12 +42,12 @@ def test_codex_runner_invokes_cli(tmp_path, monkeypatch):
         ),
     )
     runner = make_runner("codex")
-    with RunLog("ai", logs_dir, now=now) as rl:
+    with TrajectoryWriter("ai", traj_dir, now=now) as tw:
         result = runner.execute(
             topic,
-            Paths(output_dir=out_dir, logs_dir=logs_dir),
+            Paths(output_dir=out_dir, trajectories_dir=traj_dir),
             Limits(timeout_seconds=10),
-            run_log=rl, now=now,
+            traj=tw, now=now,
         )
     assert result.status == "ok"
     p = out_dir / "ai" / "2026-05-20.md"
@@ -55,3 +56,5 @@ def test_codex_runner_invokes_cli(tmp_path, monkeypatch):
     assert "runner: codex" in content
     assert "model: unknown" in content
     assert "# from-codex" in content
+    recs = read_trajectory(tw.path)
+    assert recs[-1]["type"] == "result" and recs[-1]["status"] == "ok"

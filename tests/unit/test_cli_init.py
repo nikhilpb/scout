@@ -12,10 +12,12 @@ def test_init_creates_structure(tmp_path):
     assert (root / "output").is_dir()
     assert (root / "state").is_dir()
     assert (root / "logs").is_dir()
+    assert (root / "trajectories").is_dir()
     assert (root / "scout.toml").is_file()
     assert (root / ".gitignore").read_text() == "state/\nlogs/\n"
     assert (root / "topics" / ".gitkeep").is_file()
     assert (root / "output" / ".gitkeep").is_file()
+    assert (root / "trajectories" / ".gitkeep").is_file()
 
 
 def test_init_scout_toml_content(tmp_path):

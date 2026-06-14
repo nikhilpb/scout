@@ -72,20 +72,15 @@ def run_loop(
     turn = 0
     written_path: str | None = None
 
-    rl = getattr(ctx, "runlog", None)
+    traj = getattr(ctx, "traj", None)
+    if traj is not None:
+        traj.message("system", system_prompt)
+        traj.message("user", user_prompt)
     while True:
         if time.monotonic() - start > timeout_seconds:
             return LoopResult(status="failed", reason="timeout", turns=turn)
         turn += 1
-        turn_t0 = time.monotonic()
         resp = client.call(messages, tools_payload, model)
-        if rl is not None:
-            rl.event(
-                "llm_turn", turn=turn,
-                input_tokens=resp.input_tokens, output_tokens=resp.output_tokens,
-                cost_usd=resp.cost_usd,
-                duration_ms=int((time.monotonic() - turn_t0) * 1000),
-            )
 
         assistant: dict[str, Any] = {"role": "assistant", "content": resp.text}
         if resp.tool_calls:
@@ -99,6 +94,33 @@ def run_loop(
             ]
         messages.append(assistant)
 
+        assistant_id: str | None = None
+        if traj is not None:
+            traj.note_usage(
+                input_tokens=resp.input_tokens,
+                output_tokens=resp.output_tokens,
+                cost_usd=resp.cost_usd,
+            )
+            content_parts: list[dict] = []
+            if resp.text:
+                content_parts.append({"type": "text", "text": resp.text})
+            for tc in resp.tool_calls:
+                content_parts.append(
+                    {"type": "tool_use", "call_id": tc.id, "name": tc.name,
+                     "input": tc.arguments}
+                )
+            assistant_id = traj.message(
+                "assistant",
+                content_parts,
+                model=model,
+                stop_reason="tool_use" if resp.tool_calls else "end_turn",
+                usage={
+                    "input_tokens": resp.input_tokens,
+                    "output_tokens": resp.output_tokens,
+                    "cost_usd": resp.cost_usd,
+                },
+            )
+
         if not resp.tool_calls:
             if written_path is None:
                 return LoopResult(status="failed", reason="no_digest", turns=turn)
@@ -107,13 +129,20 @@ def run_loop(
         for tc in resp.tool_calls:
             tool_t0 = time.monotonic()
             result = _dispatch(tc.name, tc.arguments, ctx)
-            if rl is not None:
-                rl.event(
-                    "tool_call", tool=tc.name, args=tc.arguments,
-                    ok=bool(result.get("ok", True)),
-                    error=result.get("error"),
-                    duration_ms=int((time.monotonic() - tool_t0) * 1000),
-                    result_bytes=len(json.dumps(result)),
+            ok = bool(result.get("ok", True))
+            duration_ms = int((time.monotonic() - tool_t0) * 1000)
+            if traj is not None:
+                call_rec = traj.tool_call(
+                    call_id=tc.id, name=tc.name, arguments=tc.arguments,
+                    parent_id=assistant_id,
+                )
+                traj.tool_result(
+                    call_id=tc.id,
+                    status="ok" if ok else "error",
+                    result={"content": result, "bytes": len(json.dumps(result))},
+                    parent_id=call_rec,
+                    error=None if ok else {"message": str(result.get("error"))},
+                    duration_ms=duration_ms,
                 )
             messages.append({
                 "role": "tool", "tool_call_id": tc.id,

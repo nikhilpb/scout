@@ -1,18 +1,29 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, Optional, Protocol
 
 from scout.config import LoadedTopic
-from scout.runlog import RunLog
+from scout.trajectory import TrajectoryWriter
 
 
 @dataclass(frozen=True)
 class Paths:
     output_dir: Path
-    logs_dir: Path
+    trajectories_dir: Path
+
+    def rel(self, path: Path) -> str:
+        """A path rendered relative to the data-repo root (parent of output_dir).
+
+        Used for the ``path`` field of trajectory ``artifact`` records so every
+        runner records the digest location the same way.
+        """
+        try:
+            return str(path.relative_to(self.output_dir.parent))
+        except ValueError:
+            return str(path)
 
 
 @dataclass(frozen=True)
@@ -27,6 +38,12 @@ class RunResult:
     output_path: Optional[Path]
     duration_seconds: float
     summary: dict
+    # Rich metrics for the trajectory `result` record. Defaulted so existing
+    # positional ``RunResult(status, reason, path, duration, summary)`` callers
+    # (and test stubs) keep working unchanged.
+    usage: dict = field(default_factory=dict)
+    num_turns: Optional[int] = None
+    permission_denials: list = field(default_factory=list)
 
 
 class Runner(Protocol):
@@ -36,7 +53,7 @@ class Runner(Protocol):
         paths: Paths,
         limits: Limits,
         *,
-        run_log: RunLog,
+        traj: TrajectoryWriter,
         now: datetime,
         last_run: Optional[datetime] = None,
     ) -> RunResult: ...
@@ -88,6 +105,27 @@ def apply_time_window(
         .replace("{{last_run}}", last_s)
         .replace("{{cadence_window}}", cadence)
     )
+
+
+def subprocess_error(
+    reason: str, returncode: Optional[int], stderr: Optional[str]
+) -> Optional[dict]:
+    """Build a trajectory ``result.error`` from a CLI-subprocess failure.
+
+    Captures the tail of the subprocess's stderr (and its exit code) so a failed
+    CLI run is debuggable from the trajectory — the diagnostics the old
+    ``subprocess_output`` run-log event used to carry. Returns ``None`` when
+    there's nothing useful to record (no stderr, clean/unknown exit).
+    """
+    tail = (stderr or "")[-2000:]
+    if not tail and returncode in (None, 0):
+        return None
+    err: dict = {"type": "subprocess", "message": reason}
+    if returncode is not None:
+        err["returncode"] = returncode
+    if tail:
+        err["stderr"] = tail
+    return err
 
 
 def make_runner(name: str) -> Runner:

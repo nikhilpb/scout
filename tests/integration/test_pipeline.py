@@ -84,7 +84,7 @@ def test_failed_run_preserves_success_window(tmp_path, monkeypatch):
     seen = {}
 
     class FailingRunner:
-        def execute(self, topic, paths, limits, *, run_log, now, last_run=None):
+        def execute(self, topic, paths, limits, *, traj, now, last_run=None):
             seen["last_run"] = last_run
             return RunResult("failed", "boom", None, 0.1, {})
 
@@ -99,3 +99,12 @@ def test_failed_run_preserves_success_window(tmp_path, monkeypatch):
     assert st.last_status == "failed"
     assert st.last_run > prior_success          # attempt advanced
     assert st.last_success_run == prior_success  # success window preserved
+
+    # The worker guarantees a terminal `result` even though FailingRunner never
+    # wrote one, so the trajectory isn't left looking "running".
+    from tests.conftest import only_trajectory
+    recs = only_trajectory(data.trajectories_dir, "smoke")
+    assert recs[0]["type"] == "run"
+    assert recs[-1]["type"] == "result"
+    assert recs[-1]["status"] == "failed"
+    assert recs[-1]["reason"] == "boom"

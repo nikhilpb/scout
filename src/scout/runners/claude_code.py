@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import time
@@ -9,9 +10,9 @@ from pathlib import Path
 from typing import Optional
 
 from scout.config import LoadedTopic
-from scout.output import DigestRecord, compose_digest
-from scout.runlog import RunLog
-from scout.runner import Limits, Paths, RunResult, apply_time_window
+from scout.output import DigestRecord, compose_digest, first_heading
+from scout.runner import Limits, Paths, RunResult, apply_time_window, subprocess_error
+from scout.trajectory import TrajectoryWriter
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "prompts"
 
@@ -44,7 +45,7 @@ class ClaudeCodeRunner:
         paths: Paths,
         limits: Limits,
         *,
-        run_log: RunLog,
+        traj: TrajectoryWriter,
         now: datetime,
         last_run: Optional[datetime] = None,
     ) -> RunResult:
@@ -55,9 +56,6 @@ class ClaudeCodeRunner:
         # Glob has a directory to list when reviewing prior digests.
         (paths.output_dir / topic.slug).mkdir(parents=True, exist_ok=True)
 
-        run_log.event(
-            "run_start", slug=topic.slug, runner="claude-code", model=model or UNKNOWN
-        )
         cmd = [
             "claude", "-p", prompt,
             "--output-format", "stream-json", "--verbose",
@@ -85,32 +83,23 @@ class ClaudeCodeRunner:
         except subprocess.TimeoutExpired as exc:
             duration = time.monotonic() - start
             # Salvage whatever the CLI streamed before we killed it, so a timeout
-            # is debuggable and partial tool activity still lands in the run log.
+            # is debuggable and partial activity still lands in the trajectory.
             partial = self._as_text(exc.stdout)
-            stderr = self._as_text(exc.stderr)
             metrics = self._parse_stream(partial)
-            run_log.event(
-                "subprocess_output", returncode=None, timed_out=True,
-                stderr=stderr[-2000:], stdout_tail=partial[-1000:],
-            )
-            # Salvage cost/tokens too, not just tool calls — a CLI that streamed a
-            # full result event before hanging still has real usage to record.
-            self._replay_metrics(run_log, metrics)
-            return self._fail(run_log, "timeout", duration, summary=run_log.summary())
+            self._emit_records(traj, partial)
+            self._note(traj, metrics)
+            return self._fail(traj, "timeout", duration, metrics=metrics,
+                              stderr=self._as_text(exc.stderr))
         duration = time.monotonic() - start
 
         metrics = self._parse_stream(proc.stdout)
-        run_log.event(
-            "subprocess_output",
-            returncode=proc.returncode,
-            stderr=proc.stderr[-2000:],
-            stdout_tail=proc.stdout[-1000:],
-        )
-        # Replay parsed activity into the run log so RunLog.summary() aggregates
-        # tool calls, tokens, and cost exactly as it does for the builtin runner.
-        self._replay_metrics(run_log, metrics)
+        # Translate the stream into trajectory records (assistant messages, tool
+        # calls/results) and aggregate tokens/cost, so the trajectory and the
+        # digest frontmatter carry the same metrics the builtin runner does.
+        self._emit_records(traj, proc.stdout)
+        self._note(traj, metrics)
 
-        summary = run_log.summary()
+        summary = traj.summary()
 
         # Prefer the CLI's own success signal (the result event) over the raw exit
         # code: a benign non-zero exit after a run that the CLI itself reported as
@@ -118,13 +107,16 @@ class ClaudeCodeRunner:
         # to the exit code when there is no result event to trust.
         if metrics["is_error"]:
             reason = metrics["error_subtype"] or "cli_error"
-            return self._fail(run_log, reason, duration, summary=summary)
+            return self._fail(traj, reason, duration, metrics=metrics,
+                              stderr=proc.stderr, returncode=proc.returncode)
         if metrics["result"] is None and proc.returncode != 0:
-            return self._fail(run_log, f"exit_{proc.returncode}", duration, summary=summary)
+            return self._fail(traj, f"exit_{proc.returncode}", duration, metrics=metrics,
+                              stderr=proc.stderr, returncode=proc.returncode)
 
         out_path = paths.output_dir / topic.slug / f"{now.strftime('%Y-%m-%d')}.md"
         if not out_path.exists():
-            return self._fail(run_log, "no_digest", duration, summary=summary)
+            return self._fail(traj, "no_digest", duration, metrics=metrics,
+                              stderr=proc.stderr, returncode=proc.returncode)
 
         body = out_path.read_text()
         resolved_model = metrics["model"] or model or UNKNOWN
@@ -148,48 +140,204 @@ class ClaudeCodeRunner:
             tokens=tokens,
             cost_usd=cost_usd,
         )
-        out_path.write_text(compose_digest(rec, body))
-        run_log.event("run_end", status="ok", duration_seconds=duration, **summary)
-        return RunResult("ok", None, out_path, duration, summary)
+        composed = compose_digest(rec, body)
+        out_path.write_text(composed)
+        rel = paths.rel(out_path)
+        usage = self._rich_usage(metrics)
+        traj.artifact(
+            kind="digest", path=rel, media_type="text/markdown",
+            size_bytes=len(composed.encode("utf-8")),
+            sha256=hashlib.sha256(composed.encode("utf-8")).hexdigest(),
+            summary=first_heading(body),
+        )
+        traj.result(
+            status="ok", duration_seconds=duration, usage=usage,
+            tool_calls=summary["tool_calls"], num_turns=metrics["num_turns"],
+            permission_denials=metrics["permission_denials"] or None,
+            artifacts=[rel],
+        )
+        return RunResult(
+            "ok", None, out_path, duration, summary,
+            usage=usage, num_turns=metrics["num_turns"],
+            permission_denials=metrics["permission_denials"] or [],
+        )
 
-    def _replay_metrics(self, run_log: RunLog, metrics: dict) -> None:
-        """Feed parsed stream activity into the run log.
-
-        Re-emits one ``tool_call`` event per observed call and a single
-        ``llm_turn`` carrying the aggregate tokens/cost, so ``RunLog.summary()``
-        aggregates claude-code runs the same way it does builtin ones. Used by
-        both the success path and the timeout-salvage path.
-        """
-        for name, count in metrics["tool_calls"].items():
-            for _ in range(count):
-                run_log.event("tool_call", tool=name)
+    @staticmethod
+    def _note(traj: TrajectoryWriter, metrics: dict) -> None:
+        """Roll the parsed aggregate tokens/cost into the trajectory summary."""
         if metrics["result"] is not None:
-            run_log.event(
-                "llm_turn",
+            traj.note_usage(
                 input_tokens=metrics["tokens"]["input"],
                 output_tokens=metrics["tokens"]["output"],
                 cost_usd=metrics["cost_usd"],
-                num_turns=metrics["num_turns"],
             )
-        if metrics["permission_denials"]:
-            run_log.event("permission_denials", denials=metrics["permission_denials"])
+
+    def _emit_records(self, traj: TrajectoryWriter, stdout: str) -> None:
+        """Translate a Claude Code ``stream-json`` transcript into records.
+
+        Assistant events become ``message`` records (text + reasoning + tool_use
+        content parts) plus one ``tool_call`` per new tool_use id; user events'
+        ``tool_result`` blocks become ``tool_result`` records. Malformed lines are
+        skipped so a partial/stubbed stream degrades gracefully.
+        """
+        seen_tool_ids: set[str] = set()
+        call_recs: dict[str, str] = {}
+        for line in stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                ev = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(ev, dict):
+                continue
+            msg = ev.get("message")
+            if not isinstance(msg, dict):
+                continue
+            content = msg.get("content")
+            if ev.get("type") == "assistant":
+                parts, tool_uses = self._content_parts(content)
+                msg_id = (
+                    traj.message(
+                        "assistant", parts,
+                        model=msg.get("model"),
+                        stop_reason=msg.get("stop_reason"),
+                        usage=self._msg_usage(msg.get("usage")),
+                    )
+                    if parts
+                    else None
+                )
+                for tu in tool_uses:
+                    tid = tu.get("id")
+                    if tid is not None and tid in seen_tool_ids:
+                        continue
+                    if tid is not None:
+                        seen_tool_ids.add(tid)
+                    rec = traj.tool_call(
+                        call_id=tid or "", name=tu.get("name", "?"),
+                        arguments=tu.get("input") or {}, parent_id=msg_id,
+                    )
+                    if tid is not None:
+                        call_recs[tid] = rec
+            elif ev.get("type") == "user" and isinstance(content, list):
+                for block in content:
+                    if not isinstance(block, dict) or block.get("type") != "tool_result":
+                        continue
+                    tuid = block.get("tool_use_id") or ""
+                    traj.tool_result(
+                        call_id=tuid,
+                        status="error" if block.get("is_error") else "ok",
+                        result={"content": block.get("content")},
+                        parent_id=call_recs.get(tuid),
+                    )
+
+    @staticmethod
+    def _content_parts(content) -> tuple[list[dict], list[dict]]:
+        """Split a Claude message ``content`` into trajectory parts + tool_use blocks."""
+        if isinstance(content, str):
+            return ([{"type": "text", "text": content}] if content else []), []
+        parts: list[dict] = []
+        tool_uses: list[dict] = []
+        for block in content or []:
+            if not isinstance(block, dict):
+                continue
+            btype = block.get("type")
+            if btype == "text" and block.get("text"):
+                parts.append({"type": "text", "text": block["text"]})
+            elif btype == "thinking":
+                parts.append({"type": "reasoning",
+                              "text": block.get("thinking") or block.get("text") or ""})
+            elif btype == "tool_use":
+                parts.append({"type": "tool_use", "call_id": block.get("id") or "",
+                              "name": block.get("name", "?"), "input": block.get("input") or {}})
+                tool_uses.append(block)
+        return parts, tool_uses
+
+    @staticmethod
+    def _msg_usage(usage) -> Optional[dict]:
+        if not isinstance(usage, dict):
+            return None
+        out = {}
+        for src, dst in (
+            ("input_tokens", "input_tokens"),
+            ("output_tokens", "output_tokens"),
+            ("cache_read_input_tokens", "cache_read_input_tokens"),
+            ("cache_creation_input_tokens", "cache_creation_input_tokens"),
+        ):
+            if usage.get(src) is not None:
+                out[dst] = ClaudeCodeRunner._int(usage.get(src))
+        return out or None
+
+    @classmethod
+    def _rich_usage(cls, metrics: Optional[dict]) -> dict:
+        """Build a trajectory ``result.usage`` from the parsed result event.
+
+        Reports cache-token breakdown and a per-model split (from the CLI's
+        ``modelUsage``) that the aggregate frontmatter token count folds together.
+        """
+        result = metrics.get("result") if metrics else None
+        if result is None:
+            return {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "cost_usd": 0.0}
+        model_usage = {
+            k: v for k, v in (result.get("modelUsage") or {}).items() if isinstance(v, dict)
+        }
+        inp = out = crd = cre = 0
+        by_model: dict[str, dict] = {}
+        for name, v in model_usage.items():
+            i = cls._int(v.get("inputTokens"))
+            o = cls._int(v.get("outputTokens"))
+            rd = cls._int(v.get("cacheReadInputTokens"))
+            cc = cls._int(v.get("cacheCreationInputTokens"))
+            by_model[name] = {
+                "input_tokens": i, "output_tokens": o,
+                "cache_read_input_tokens": rd, "cache_creation_input_tokens": cc,
+                "cost_usd": cls._num(v.get("costUSD")),
+            }
+            inp += i
+            out += o
+            crd += rd
+            cre += cc
+        if not model_usage:
+            u = result.get("usage") or {}
+            inp = cls._int(u.get("input_tokens"))
+            out = cls._int(u.get("output_tokens"))
+            crd = cls._int(u.get("cache_read_input_tokens"))
+            cre = cls._int(u.get("cache_creation_input_tokens"))
+        total_input = inp + crd + cre
+        usage = {
+            "input_tokens": total_input, "output_tokens": out,
+            "cache_read_input_tokens": crd, "cache_creation_input_tokens": cre,
+            "total_tokens": total_input + out,
+            "cost_usd": cls._num(result.get("total_cost_usd")),
+        }
+        if by_model:
+            usage["by_model"] = by_model
+        return usage
 
     def _fail(
         self,
-        run_log: RunLog,
+        traj: TrajectoryWriter,
         reason: str,
         duration: float,
         *,
-        summary: dict | None = None,
+        metrics: Optional[dict] = None,
+        stderr: Optional[str] = None,
+        returncode: Optional[int] = None,
     ) -> RunResult:
-        fields = summary if summary is not None else {
-            "tool_calls": UNKNOWN, "tokens": UNKNOWN, "cost_usd": UNKNOWN,
-        }
-        run_log.event(
-            "run_end", status="failed", reason=reason,
-            duration_seconds=duration, **fields,
+        usage = self._rich_usage(metrics) if metrics else None
+        num_turns = metrics.get("num_turns") if metrics else None
+        denials = (metrics.get("permission_denials") if metrics else None) or None
+        traj.result(
+            status="failed", reason=reason, duration_seconds=duration,
+            usage=usage, num_turns=num_turns, permission_denials=denials,
+            error=subprocess_error(reason, returncode, stderr),
         )
-        return RunResult("failed", reason, None, duration, summary or {})
+        return RunResult(
+            "failed", reason, None, duration, traj.summary(),
+            usage=usage or {}, num_turns=num_turns,
+            permission_denials=(metrics.get("permission_denials") if metrics else []) or [],
+        )
 
     @staticmethod
     def _as_text(value) -> str:

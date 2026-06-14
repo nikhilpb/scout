@@ -8,8 +8,16 @@ from pathlib import Path
 import pytest
 
 from scout.config import LoadedTopic, TopicConfig
-from scout.runlog import RunLog
 from scout.runner import Limits, Paths, make_runner
+from scout.trajectory import TrajectoryWriter
+from tests.conftest import read_trajectory
+
+
+def _paths(tmp_path):
+    return Paths(
+        output_dir=tmp_path / "output",
+        trajectories_dir=tmp_path / "trajectories",
+    )
 
 
 def _install_fake_claude(bindir: Path, body_to_write: str, file_rel: str):
@@ -45,8 +53,6 @@ def _install_streaming_fake_claude(
 @pytest.mark.integration
 def test_claude_code_runner_invokes_cli(tmp_path, monkeypatch):
     bindir = tmp_path / "bin"
-    out_dir = tmp_path / "output"
-    logs_dir = tmp_path / "logs"
     now = datetime(2026, 5, 20, 7, tzinfo=timezone.utc)
     _install_fake_claude(bindir, body_to_write="# from-claude", file_rel="ai/2026-05-20.md")
 
@@ -60,27 +66,24 @@ def test_claude_code_runner_invokes_cli(tmp_path, monkeypatch):
         ),
     )
     runner = make_runner("claude-code")
-    with RunLog("ai", logs_dir, now=now) as rl:
+    with TrajectoryWriter("ai", tmp_path / "trajectories", now=now) as tw:
         result = runner.execute(
-            topic,
-            Paths(output_dir=out_dir, logs_dir=logs_dir),
-            Limits(timeout_seconds=10),
-            run_log=rl, now=now,
+            topic, _paths(tmp_path), Limits(timeout_seconds=10), traj=tw, now=now,
         )
     assert result.status == "ok"
-    p = out_dir / "ai" / "2026-05-20.md"
+    p = tmp_path / "output" / "ai" / "2026-05-20.md"
     assert p.exists()
     content = p.read_text()
     # No stream-json => metrics fall back to `unknown`, but the run still succeeds.
     assert "model: unknown" in content
     assert "# from-claude" in content
+    recs = read_trajectory(tw.path)
+    assert recs[-1]["type"] == "result" and recs[-1]["status"] == "ok"
 
 
 @pytest.mark.integration
 def test_claude_code_runner_captures_metrics(tmp_path, monkeypatch):
     bindir = tmp_path / "bin"
-    out_dir = tmp_path / "output"
-    logs_dir = tmp_path / "logs"
     now = datetime(2026, 5, 20, 7, tzinfo=timezone.utc)
     stream_lines = [
         json.dumps({"type": "system", "subtype": "init", "model": "claude-sonnet-4-6"}),
@@ -117,28 +120,34 @@ def test_claude_code_runner_captures_metrics(tmp_path, monkeypatch):
         ),
     )
     runner = make_runner("claude-code")
-    with RunLog("ai", logs_dir, now=now) as rl:
+    with TrajectoryWriter("ai", tmp_path / "trajectories", now=now) as tw:
         result = runner.execute(
-            topic,
-            Paths(output_dir=out_dir, logs_dir=logs_dir),
-            Limits(timeout_seconds=10),
-            run_log=rl, now=now,
+            topic, _paths(tmp_path), Limits(timeout_seconds=10), traj=tw, now=now,
         )
     assert result.status == "ok"
-    content = (out_dir / "ai" / "2026-05-20.md").read_text()
+    content = (tmp_path / "output" / "ai" / "2026-05-20.md").read_text()
     assert "model: claude-sonnet-4-6" in content
     assert "cost_usd: 0.0123" in content
     # tool calls counted from the stream, duplicate id collapsed to one WebSearch
     assert result.summary["tool_calls"] == {"WebSearch": 1, "WebFetch": 1, "Write": 1}
     assert result.summary["tokens"] == {"input": 6300, "output": 200}
     assert "# digest body" in content
+    # the trajectory mirrors those metrics, with a per-model + cache token split
+    recs = read_trajectory(tw.path)
+    tool_names = [r["name"] for r in recs if r["type"] == "tool_call"]
+    assert tool_names == ["WebSearch", "WebFetch", "Write"]
+    res = recs[-1]
+    assert res["type"] == "result" and res["status"] == "ok"
+    assert res["tool_calls"] == {"WebSearch": 1, "WebFetch": 1, "Write": 1}
+    assert res["usage"]["input_tokens"] == 6300
+    assert res["usage"]["cache_read_input_tokens"] == 5000
+    assert res["usage"]["by_model"]["claude-sonnet-4-6"]["output_tokens"] == 200
+    assert res["num_turns"] == 4
 
 
 @pytest.mark.integration
 def test_claude_code_runner_passes_model_and_effort(tmp_path, monkeypatch):
     bindir = tmp_path / "bin"
-    out_dir = tmp_path / "output"
-    logs_dir = tmp_path / "logs"
     now = datetime(2026, 5, 20, 7, tzinfo=timezone.utc)
     # Fake CLI records its argv so the test can assert on the flags it received.
     bindir.mkdir(parents=True)
@@ -161,12 +170,9 @@ def test_claude_code_runner_passes_model_and_effort(tmp_path, monkeypatch):
         ),
     )
     runner = make_runner("claude-code")
-    with RunLog("ai", logs_dir, now=now) as rl:
+    with TrajectoryWriter("ai", tmp_path / "trajectories", now=now) as tw:
         result = runner.execute(
-            topic,
-            Paths(output_dir=out_dir, logs_dir=logs_dir),
-            Limits(timeout_seconds=10),
-            run_log=rl, now=now,
+            topic, _paths(tmp_path), Limits(timeout_seconds=10), traj=tw, now=now,
         )
     assert result.status == "ok"
     argv = argv_file.read_text().splitlines()
@@ -177,8 +183,6 @@ def test_claude_code_runner_passes_model_and_effort(tmp_path, monkeypatch):
 @pytest.mark.integration
 def test_claude_code_runner_timeout_salvages_partial(tmp_path, monkeypatch):
     bindir = tmp_path / "bin"
-    out_dir = tmp_path / "output"
-    logs_dir = tmp_path / "logs"
     now = datetime(2026, 5, 20, 7, tzinfo=timezone.utc)
     # Fake CLI (Python so it can flush like the real streaming CLI): emit two
     # tool_use events AND a full result event, flush them to the pipe, then hang
@@ -216,23 +220,54 @@ def test_claude_code_runner_timeout_salvages_partial(tmp_path, monkeypatch):
         ),
     )
     runner = make_runner("claude-code")
-    with RunLog("ai", logs_dir, now=now) as rl:
+    with TrajectoryWriter("ai", tmp_path / "trajectories", now=now) as tw:
         result = runner.execute(
-            topic,
-            Paths(output_dir=out_dir, logs_dir=logs_dir),
-            Limits(timeout_seconds=1),
-            run_log=rl, now=now,
+            topic, _paths(tmp_path), Limits(timeout_seconds=1), traj=tw, now=now,
         )
     assert result.status == "failed"
     assert result.reason == "timeout"
     # partial tool activity streamed before the kill is still recorded
-    log_text = rl.path.read_text()
-    assert '"timed_out": true' in log_text
-    assert '"tool": "WebSearch"' in log_text
-    assert '"tool": "WebFetch"' in log_text
+    recs = read_trajectory(tw.path)
+    tool_names = [r["name"] for r in recs if r["type"] == "tool_call"]
+    assert "WebSearch" in tool_names and "WebFetch" in tool_names
+    res = recs[-1]
+    assert res["type"] == "result" and res["status"] == "failed"
+    assert res["reason"] == "timeout"
     # cost/tokens from the salvaged result event are recorded too, not dropped
     assert result.summary["cost_usd"] == 0.42
-    assert '"cost_usd": 0.42' in log_text
+    assert res["usage"]["cost_usd"] == 0.42
+
+
+@pytest.mark.integration
+def test_claude_code_runner_records_stderr_on_failure(tmp_path, monkeypatch):
+    # CLI fails (no result event, nonzero exit) and writes a diagnostic to stderr.
+    bindir = tmp_path / "bin"
+    bindir.mkdir(parents=True)
+    now = datetime(2026, 5, 20, 7, tzinfo=timezone.utc)
+    script = bindir / "claude"
+    script.write_text("#!/bin/sh\nprintf 'boom on stderr\\n' 1>&2\nexit 1\n")
+    script.chmod(script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    monkeypatch.setenv("PATH", f"{bindir}:{os.environ['PATH']}")
+    topic = LoadedTopic(
+        slug="ai", path=Path("topics/ai.yaml"),
+        config=TopicConfig(
+            title="AI", description="AI research.",
+            cadence="0 7 * * *", runner="claude-code", model="claude-sonnet-4-6",
+            prompt={"template": "briefing"},
+        ),
+    )
+    runner = make_runner("claude-code")
+    with TrajectoryWriter("ai", tmp_path / "trajectories", now=now) as tw:
+        result = runner.execute(
+            topic, _paths(tmp_path), Limits(timeout_seconds=10), traj=tw, now=now,
+        )
+    assert result.status == "failed"
+    assert result.reason == "exit_1"
+    # the failure carries the CLI's stderr so it is debuggable from the trajectory
+    res = read_trajectory(tw.path)[-1]
+    assert res["type"] == "result" and res["status"] == "failed"
+    assert "boom on stderr" in res["error"]["stderr"]
+    assert res["error"]["returncode"] == 1
 
 
 @pytest.mark.integration
@@ -241,8 +276,6 @@ def test_claude_code_runner_keeps_digest_on_benign_nonzero_exit(tmp_path, monkey
     # process exits non-zero (e.g. a benign post-run warning). The digest must
     # be kept, not discarded.
     bindir = tmp_path / "bin"
-    out_dir = tmp_path / "output"
-    logs_dir = tmp_path / "logs"
     now = datetime(2026, 5, 20, 7, tzinfo=timezone.utc)
     stream_lines = [
         json.dumps({"type": "system", "subtype": "init", "model": "claude-sonnet-4-6"}),
@@ -274,14 +307,11 @@ def test_claude_code_runner_keeps_digest_on_benign_nonzero_exit(tmp_path, monkey
         ),
     )
     runner = make_runner("claude-code")
-    with RunLog("ai", logs_dir, now=now) as rl:
+    with TrajectoryWriter("ai", tmp_path / "trajectories", now=now) as tw:
         result = runner.execute(
-            topic,
-            Paths(output_dir=out_dir, logs_dir=logs_dir),
-            Limits(timeout_seconds=10),
-            run_log=rl, now=now,
+            topic, _paths(tmp_path), Limits(timeout_seconds=10), traj=tw, now=now,
         )
     assert result.status == "ok"
-    content = (out_dir / "ai" / "2026-05-20.md").read_text()
+    content = (tmp_path / "output" / "ai" / "2026-05-20.md").read_text()
     assert "# body" in content
     assert "cost_usd: 0.05" in content

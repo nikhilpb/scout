@@ -26,7 +26,7 @@ frontmatter.
 - [Runners](#runners)
 - [Built-in Tools](#built-in-tools)
 - [CLI Reference](#cli-reference)
-- [Output, State, and Logs](#output-state-and-logs)
+- [Output, State, Logs, and Trajectories](#output-state-logs-and-trajectories)
 - [Feedback Workflow](#feedback-workflow)
 - [Web App (PWA)](#web-app-pwa)
 - [Running on a Schedule](#running-on-a-schedule)
@@ -52,8 +52,8 @@ Core behavior:
   `output/<topic>/<date>.md`.
 - Adds run metadata as YAML frontmatter: topic, date, runner, model, duration,
   tool calls, token usage, and cost when available.
-- Stores local run state in the data repo's `state/` directory and per-run
-  JSONL logs in its `logs/` directory.
+- Stores local run state in the data repo's `state/` directory and a full,
+  committed per-run trajectory (JSONL) in its `trajectories/` directory.
 - Provides CLI helpers for validation, status, health checks, and inline
   feedback capture.
 
@@ -84,12 +84,16 @@ scout-data/
 |   `-- <slug>.yaml
 |-- output/
 |   `-- <slug>/<YYYY-MM-DD>.md
+|-- trajectories/
+|   `-- <slug>/<run-id>.jsonl
 |-- state/
 `-- logs/
 ```
 
-Scout writes digests to the data repo's `output/` directory. Its `state/` and
-`logs/` directories hold local runtime artifacts.
+Scout writes digests to the data repo's `output/` directory and a full
+record of every run to `trajectories/` (committed — see [Trajectories](#trajectories)).
+Its `state/` and `logs/` directories hold local runtime artifacts (scheduler
+state and operational stdout such as the cron tick log).
 
 In this checkout, the practical layout is:
 
@@ -474,7 +478,7 @@ The default runner. Scout owns the agent loop and calls LiteLLM directly.
 
 Use it when you want:
 
-- Full JSONL run logs.
+- Full JSONL run trajectories (messages, tool calls/results, metrics).
 - Tool-call counts in digest frontmatter.
 - Token and cost telemetry when LiteLLM returns it.
 - Scout's built-in tool allowlist.
@@ -634,7 +638,7 @@ This is the command intended for cron.
 
 ### `scout doctor`
 
-Summarize runs from the last seven days using the data repo's `logs/`:
+Summarize runs from the last seven days using the data repo's `trajectories/`:
 
 ```bash
 uv --project ../scout run scout doctor
@@ -658,6 +662,24 @@ Options:
 
 See [Web App (PWA)](#web-app-pwa) for what it serves and how to install it on
 a phone.
+
+### `scout trajectories serve`
+
+Serve the run [trajectories](#trajectories) as a browsable dashboard — an index
+of recent runs across topics, a per-topic run list, and a per-run timeline that
+walks each message, tool call/result, artifact, and the final metrics:
+
+```bash
+uv --project ../scout run scout trajectories serve
+```
+
+Options:
+
+- `--host`: bind address (default: `127.0.0.1`).
+- `--port`: port (default: `8534`).
+
+There is also a JSON endpoint at `/api/r/<slug>/<run-id>` returning the raw
+records for a run.
 
 ### `scout feedback add`
 
@@ -690,7 +712,7 @@ uv --project ../scout run scout feedback list --topic ai-research
 
 `--since` exists as a reserved v1 option but is currently ignored.
 
-## Output, State, and Logs
+## Output, State, Logs, and Trajectories
 
 ### Output
 
@@ -748,23 +770,27 @@ state/<slug>.json
 State is updated for both successful and failed runs. Lock-contention skips do
 not update state.
 
-### Logs
+### Trajectories
 
-Run logs are written as JSONL in the data repo:
+Every run records a full **trajectory** — a replayable transcript of what the
+agent did — as newline-delimited JSON in the data repo:
 
 ```text
-logs/<slug>/<YYYY-MM-DD-HHMMSS>.jsonl
+trajectories/<slug>/<run-id>.jsonl
 ```
 
-Each line is an event such as:
+`<run-id>` is a [ULID](https://github.com/ulid/spec) (time-sortable, so a
+directory listing stays chronological). The file is a `run` header, a stream of
+`message` / `tool_call` / `tool_result` / `artifact` records, and a terminal
+`result` with aggregate metrics (duration, token usage incl. cache breakdown,
+per-model split, cost, tool counts). Field names follow the OpenTelemetry GenAI
+semantic conventions; the schema and a worked example live in
+[`docs/trajectory-schema.md`](docs/trajectory-schema.md) and
+[`docs/trajectory.schema.json`](docs/trajectory.schema.json).
 
-- `run_start`
-- `llm_turn`
-- `tool_call`
-- `subprocess_output`
-- `run_end`
-
-`logs/` is gitignored.
+Unlike `logs/`, `trajectories/` is **committed** to the data repo, so every
+digest keeps its full provenance. Browse them with
+[`scout trajectories serve`](#scout-trajectories-serve).
 
 ## Feedback Workflow
 
@@ -835,7 +861,7 @@ Make sure the data repo has the expected runtime directories:
 
 ```bash
 cd /path/to/scout-data
-mkdir -p logs state output topics
+mkdir -p logs state output topics trajectories
 ```
 
 Install dependencies in the code repo:
@@ -952,6 +978,8 @@ scout-data/
 |   `-- <slug>.yaml
 |-- output/
 |   `-- <slug>/<YYYY-MM-DD>.md
+|-- trajectories/
+|   `-- <slug>/<run-id>.jsonl
 |-- state/
 `-- logs/
 ```
@@ -993,7 +1021,7 @@ Common causes:
 Check:
 
 ```bash
-ls logs/<slug>/
+ls trajectories/<slug>/
 uv --project /path/to/scout run scout doctor
 ```
 

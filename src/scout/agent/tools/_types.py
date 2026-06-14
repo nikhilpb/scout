@@ -22,7 +22,8 @@ class ToolImpl:
 class RunContext:
     slug: str
     output_dir: Path
-    logs_dir: Path
     now: datetime
-    # populated by runner before invoking tools
-    runlog: object | None = None
+    # The run's trajectory writer, set by the runner before invoking tools so the
+    # agent loop can record messages and tool activity. None in unit tests that
+    # exercise tools/loop without a trajectory.
+    traj: object | None = None
