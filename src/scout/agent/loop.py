@@ -6,7 +6,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Literal, Optional
 
-from scout.agent.llm import LLMClient
+from scout.agent.llm import LLMCallError, LLMClient
 from scout.agent.tools import registry
 from scout.agent.tools._types import RunContext
 
@@ -80,7 +80,18 @@ def run_loop(
         if time.monotonic() - start > timeout_seconds:
             return LoopResult(status="failed", reason="timeout", turns=turn)
         turn += 1
-        resp = client.call(messages, tools_payload, model)
+        try:
+            resp = client.call(messages, tools_payload, model)
+        except LLMCallError as e:
+            # The client already retried transient failures (5xx/429/timeouts)
+            # with backoff; reaching here means the provider is still erroring
+            # (or it's a non-retryable provider error). End the run cleanly as a
+            # failure instead of crashing the runner — the worker records a
+            # proper terminal result and the next scheduled tick retries.
+            log.warning("LLM call failed, ending run as failed: %s", e)
+            return LoopResult(
+                status="failed", reason=f"llm_error: {type(e).__name__}", turns=turn
+            )
 
         assistant: dict[str, Any] = {"role": "assistant", "content": resp.text}
         if resp.tool_calls:
