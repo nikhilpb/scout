@@ -501,10 +501,13 @@ built-in loop.
 The CLI is invoked with `--output-format stream-json`, and Scout parses that
 stream, so the run is not opaque:
 
-- The agent is restricted to a fixed tool set — `WebSearch`, `WebFetch`, `Read`,
-  `Glob`, and `Write` — via `--tools` (so it cannot reach `Bash`, `Task`, or the
-  multi-agent `Workflow` tool) plus `--allowedTools` (so those tools run without
-  a permission prompt). The host's MCP servers are ignored (`--strict-mcp-config`).
+- The agent has the full Claude Code built-in tool set available. `WebSearch`,
+  `WebFetch`, `Read`, `Glob`, and `Write` are the ones it leans on, but it can
+  also reach `Bash`, `Task`, and the multi-agent `Workflow` tool. Because a
+  headless `claude -p` run can't answer permission prompts, it runs with
+  `--permission-mode bypassPermissions` so any tool can be called without
+  stalling. The host's MCP servers are still ignored (`--strict-mcp-config`) to
+  keep runs focused and deterministic.
 - If the topic sets `model`, it is passed to `claude --model`; otherwise the
   CLI's default model is used.
 - The agent reviews prior digests in the topic's output folder (`Glob` + `Read`)
