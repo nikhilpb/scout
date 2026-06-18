@@ -1,15 +1,48 @@
 from __future__ import annotations
 
+import json
+import logging
+import random
+import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-import litellm  # noqa: F401
+import litellm
+import openai
 
-_TRANSIENT = (
-    getattr(litellm, "RateLimitError", Exception),
-    getattr(litellm, "APIConnectionError", Exception),
-    getattr(litellm, "Timeout", Exception),
+log = logging.getLogger("scout.agent.llm")
+
+# Common base for every provider-side completion failure. litellm raises a mix
+# of its own exception types and re-exported openai ones, but all of them
+# ultimately subclass openai.APIError (including litellm.APIError itself), so
+# this single type is what callers catch to handle "the LLM call failed" —
+# transient or not — without crashing.
+LLMCallError = openai.APIError
+
+# Provider-side failures worth retrying with backoff: rate limits (429),
+# connection drops, timeouts, and transient 5xx server errors (500/503 — e.g.
+# Gemini's "this model is currently experiencing high demand"). These usually
+# clear on their own. Client errors (bad request, auth, context-window) are
+# deliberately excluded — they fail identically on retry. Missing names are
+# filtered out so an `except ()` simply never matches rather than over-catching.
+_TRANSIENT: tuple[type[BaseException], ...] = tuple(
+    cls
+    for cls in (
+        getattr(litellm, name, None)
+        for name in (
+            "RateLimitError",
+            "APIConnectionError",
+            "Timeout",
+            "ServiceUnavailableError",
+            "InternalServerError",
+        )
+    )
+    if isinstance(cls, type) and issubclass(cls, BaseException)
 )
+
+_MAX_ATTEMPTS = 5
+_BASE_DELAY = 2.0
+_MAX_DELAY = 30.0
 
 
 @dataclass(frozen=True)
@@ -31,10 +64,7 @@ class Response:
 
 class LLMClient:
     def call(self, messages: list[dict], tools: list[dict], model: str) -> Response:
-        import json
-        import time as _time
-        delay = 2.0
-        for attempt in range(3):
+        for attempt in range(_MAX_ATTEMPTS):
             try:
                 resp = litellm.completion(
                     model=model,
@@ -43,11 +73,23 @@ class LLMClient:
                     tool_choice="auto",
                 )
                 break
-            except _TRANSIENT:
-                if attempt == 2:
+            except _TRANSIENT as e:
+                if attempt == _MAX_ATTEMPTS - 1:
+                    log.warning(
+                        "LLM call to %s failed after %d attempts: %s",
+                        model, _MAX_ATTEMPTS, e,
+                    )
                     raise
-                _time.sleep(min(delay, 8.0))
-                delay *= 2
+                # Exponential backoff with jitter — the jitter desynchronizes
+                # retries so concurrent topics don't hammer a struggling provider
+                # in lockstep.
+                backoff = min(_BASE_DELAY * 2**attempt, _MAX_DELAY)
+                delay = backoff + random.uniform(0, backoff / 2)
+                log.warning(
+                    "transient LLM error from %s (attempt %d/%d), retrying in %.1fs: %s",
+                    model, attempt + 1, _MAX_ATTEMPTS, delay, e,
+                )
+                time.sleep(delay)
         msg = resp.choices[0].message
         calls = []
         for tc in (msg.tool_calls or []):

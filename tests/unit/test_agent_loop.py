@@ -2,6 +2,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import litellm
+
 from scout.agent.llm import Response, ToolCall
 from scout.agent.loop import run_loop
 from scout.agent.tools._types import RunContext
@@ -40,6 +42,26 @@ def test_no_digest_fails(tmp_path):
     )
     assert result.status == "failed"
     assert result.reason == "no_digest"
+
+
+def test_llm_error_fails_gracefully(tmp_path):
+    # A provider error that survives the client's retries must end the run as a
+    # clean failure, not propagate and crash the runner.
+    class BoomClient:
+        def call(self, *a, **kw):
+            raise litellm.ServiceUnavailableError(
+                "high demand", llm_provider="gemini", model="m"
+            )
+
+    result = run_loop(
+        client=BoomClient(), model="m",
+        system_prompt="sys", user_prompt="usr",
+        ctx=ctx_for(tmp_path),
+        allowed_tools=["write_digest"], timeout_seconds=30,
+    )
+    assert result.status == "failed"
+    assert result.reason is not None
+    assert result.reason.startswith("llm_error:")
 
 
 def test_timeout(tmp_path):
