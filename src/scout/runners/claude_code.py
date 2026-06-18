@@ -16,16 +16,6 @@ from scout.trajectory import TrajectoryWriter
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "prompts"
 
-# The only tools a digest run needs: WebSearch and WebFetch gather sources; Read
-# and Glob let the agent inspect prior digests for de-duplication; Write saves the
-# digest. This list is passed BOTH as `--tools` (which restricts the set of tools
-# the model can see at all — so it can't reach Bash, Task, or the multi-agent
-# Workflow tool and wander off) and as `--allowedTools` (which pre-approves them so
-# they run without a permission prompt on a host whose default mode would
-# otherwise ask). `--tools` is the load-bearing one: without it, a host configured
-# with an "auto"/skip-prompt permission policy lets the agent call anything.
-DIGEST_TOOLS = ["WebSearch", "WebFetch", "Read", "Glob", "Write"]
-
 UNKNOWN = "unknown"
 
 
@@ -60,16 +50,18 @@ class ClaudeCodeRunner:
             "claude", "-p", prompt,
             "--output-format", "stream-json", "--verbose",
             "--strict-mcp-config",  # ignore the host's MCP servers — keep the run focused
-            "--permission-mode", "default",
+            # No `--tools` restriction: let the agent use the full Claude Code
+            # built-in tool set (WebSearch/WebFetch/Read/Glob/Write plus Bash,
+            # Task, the multi-agent Workflow tool, etc.). A headless `claude -p`
+            # run can't answer permission prompts, so bypass them — otherwise any
+            # tool that isn't pre-approved would be auto-denied and the agent
+            # would stall instead of being able to call it.
+            "--permission-mode", "bypassPermissions",
         ]
         if model:
             cmd += ["--model", model]
         if cfg.effort:
             cmd += ["--effort", cfg.effort]
-        # `--tools` bounds what the model can call; `--allowedTools` pre-approves
-        # those same tools. `--allowedTools` is variadic and goes last so nothing
-        # following it gets swallowed as a tool name.
-        cmd += ["--tools", *DIGEST_TOOLS, "--allowedTools", *DIGEST_TOOLS]
 
         start = time.monotonic()
         try:
@@ -471,9 +463,11 @@ class ClaudeCodeRunner:
             f'You are Scout\'s research agent producing a markdown digest for the '
             f'topic "{cfg.title}".\n\n'
             f"Description: {cfg.description}\n\n"
-            "Tools available to you: WebSearch and WebFetch to discover and read "
-            "sources; Read and Glob to inspect files; Write to save the digest. "
-            "No other tools are available.\n\n"
+            "You have the full Claude Code tool set available. The ones most "
+            "useful for this task are WebSearch and WebFetch to discover and read "
+            "sources, Read and Glob to inspect files, and Write to save the "
+            "digest; reach for any other tool (e.g. Bash) when it genuinely "
+            "helps.\n\n"
             "Seed sources (starting points, not exhaustive — use WebSearch and "
             "WebFetch to find the most recent primary sources):\n"
             + "\n".join(self._source_lines(cfg.sources))
